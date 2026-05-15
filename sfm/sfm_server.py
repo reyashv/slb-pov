@@ -74,7 +74,7 @@ async def lifespan(app: FastAPI):
     global model
     model_dir = os.environ["MODEL_DIR"]
     arch = os.environ.get("SFM_ARCH", "vit_base_patch16")
-    img_size = 224
+    img_size = int(os.environ.get("SFM_IMG_SIZE", "224"))
 
     if arch not in MODEL_REGISTRY:
         raise ValueError(f"Unknown arch: {arch}. Choose from {list(MODEL_REGISTRY.keys())}")
