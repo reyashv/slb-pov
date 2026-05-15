@@ -10,9 +10,8 @@ from pydantic import BaseModel
 from typing import List
 import timm.models.vision_transformer
 
-# ── Inline VisionTransformer from MAE/SFM ──────────────────────────────────
-# This is the exact models_vit.py from facebookresearch/mae — copied here
-# so we have zero dependency on external repos or runtime git clones.
+
+# ── Inline VisionTransformer from facebookresearch/mae ──────────────────────
 
 class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
     """Vision Transformer with support for global average pooling"""
@@ -60,13 +59,13 @@ def vit_large_patch16(**kwargs):
     return model
 
 
-# ── Model registry ──────────────────────────────────────────────────────────
 MODEL_REGISTRY = {
     "vit_base_patch16": vit_base_patch16,
     "vit_large_patch16": vit_large_patch16,
 }
 
-# ── FastAPI app ─────────────────────────────────────────────────────────────
+# ── FastAPI app ──────────────────────────────────────────────────────────────
+
 model = None
 
 
@@ -75,13 +74,18 @@ async def lifespan(app: FastAPI):
     global model
     model_dir = os.environ["MODEL_DIR"]
     arch = os.environ.get("SFM_ARCH", "vit_base_patch16")
+    img_size = int(os.environ.get("SFM_IMG_SIZE", "224"))
 
     if arch not in MODEL_REGISTRY:
         raise ValueError(f"Unknown arch: {arch}. Choose from {list(MODEL_REGISTRY.keys())}")
 
-    m = MODEL_REGISTRY[arch](num_classes=0, global_pool=False, in_chans=1)
+    m = MODEL_REGISTRY[arch](
+        num_classes=0,
+        global_pool=False,
+        in_chans=1,
+        img_size=img_size
+    )
 
-    # Find the .pth file — handles any filename TrueFoundry downloads
     pth_files = glob.glob(os.path.join(model_dir, "*.pth"))
     if not pth_files:
         raise FileNotFoundError(
@@ -98,7 +102,7 @@ async def lifespan(app: FastAPI):
 
     m.eval().cuda()
     model = m
-    print(f"SFM ready — arch={arch}")
+    print(f"SFM ready — arch={arch}, img_size={img_size}, in_chans=1")
     yield
 
 
@@ -115,7 +119,7 @@ class InferRequest(BaseModel):
 
 
 class InferResponse(BaseModel):
-    features: List[float]   # CLS token — 1D vector
+    features: List[float]
 
 
 @app.get("/health")
