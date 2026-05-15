@@ -5,15 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List
-
-try:
-    from transformers import AutoVideoProcessor
-    PROCESSOR_CLASS = AutoVideoProcessor
-except ImportError:
-    from transformers import AutoProcessor
-    PROCESSOR_CLASS = AutoProcessor
-
-from transformers import AutoModel
+from transformers import AutoVideoProcessor, AutoModel
 
 model = None
 processor = None
@@ -23,8 +15,12 @@ async def lifespan(app: FastAPI):
     global model, processor
     model_dir = os.environ["MODEL_DIR"]
     print(f"Loading V-JEPA encoder from {model_dir}...")
-    model = AutoModel.from_pretrained(model_dir).cuda().eval()
-    processor = PROCESSOR_CLASS.from_pretrained(model_dir)
+    processor = AutoVideoProcessor.from_pretrained(model_dir)
+    model = AutoModel.from_pretrained(
+        model_dir,
+        torch_dtype=torch.float16,
+        attn_implementation="sdpa"
+    ).cuda().eval()
     print("V-JEPA encoder ready")
     yield
 
@@ -34,7 +30,8 @@ app = FastAPI(
 )
 
 class EmbedRequest(BaseModel):
-    frames: List[List[float]]  # each frame flat list of pixel values 0-1
+    # Each frame as flat list of pixel values 0-1 in H*W*C order
+    frames: List[List[float]]
     height: int
     width: int
     channels: int = 3
@@ -49,33 +46,28 @@ def health():
 
 @app.post("/embeddings", response_model=EmbedResponse)
 def embed(req: EmbedRequest):
-    # Convert float32 0-1 → uint8 0-255 as processor expects
-    frames_np = []
+    # Convert each frame from flat H*W*C float 0-1 → [C, H, W] uint8
+    frames_tchw = []
     for f in req.frames:
-        arr = np.array(f, dtype=np.float32).reshape(req.height, req.width, req.channels)
-        arr_uint8 = (arr * 255).clip(0, 255).astype(np.uint8)
-        frames_np.append(arr_uint8)
+        arr_hwc = np.array(f, dtype=np.float32).reshape(req.height, req.width, req.channels)
+        arr_uint8 = (arr_hwc * 255).clip(0, 255).astype(np.uint8)
+        arr_chw = arr_uint8.transpose(2, 0, 1)  # [H,W,C] → [C,H,W]
+        frames_tchw.append(arr_chw)
 
-    # processor expects list of numpy arrays [H, W, C] uint8
-    inputs = processor(frames_np, return_tensors="pt")
-    inputs = {k: v.cuda() for k, v in inputs.items()}
+    # Stack to [T, C, H, W] — format V-JEPA processor expects
+    video = np.stack(frames_tchw, axis=0)
+
+    # Process frames
+    video_inputs = processor(video, return_tensors="pt")
+    video_inputs = {k: v.cuda() for k, v in video_inputs.items()}
 
     with torch.no_grad():
-        outputs = model(**inputs)
+        embeddings = model.get_vision_features(**video_inputs)
 
-    # Handle different output formats
-    if hasattr(outputs, "last_hidden_state"):
-        hidden = outputs.last_hidden_state
-    elif hasattr(outputs, "pooler_output"):
-        hidden = outputs.pooler_output.unsqueeze(1)
-    else:
-        # fallback — take first tensor output
-        hidden = list(outputs.values())[0]
-
-    # Pool over patch tokens → one vector per clip
-    embeddings = hidden.mean(dim=1)
+    # Pool over patch tokens → [batch, embed_dim]
+    pooled = embeddings.mean(dim=1).float()
 
     return EmbedResponse(
-        embeddings=embeddings.cpu().tolist(),
-        dim=embeddings.shape[-1]
+        embeddings=pooled.cpu().tolist(),
+        dim=pooled.shape[-1]
     )
