@@ -79,7 +79,7 @@ async def lifespan(app: FastAPI):
     if arch not in MODEL_REGISTRY:
         raise ValueError(f"Unknown arch: {arch}. Choose from {list(MODEL_REGISTRY.keys())}")
 
-    m = MODEL_REGISTRY[arch](num_classes=0, global_pool=False)
+    m = MODEL_REGISTRY[arch](num_classes=0, global_pool=False, in_chans=1)
 
     # Find the .pth file — handles any filename TrueFoundry downloads
     pth_files = glob.glob(os.path.join(model_dir, "*.pth"))
