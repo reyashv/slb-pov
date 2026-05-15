@@ -1,10 +1,9 @@
-torch==2.2.0
-torchvision==0.17.0
-transformers>=4.51.0
-accelerate==0.30.0
+torch==2.4.0
+torchvision==0.19.0
+transformers @ git+https://github.com/huggingface/transformers
+accelerate>=0.30.0
 einops==0.8.0
 timm==0.9.16
-decord==0.6.0
 fastapi==0.111.0
 uvicorn==0.29.0
 gunicorn==22.0.0
