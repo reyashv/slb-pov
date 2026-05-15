@@ -1,5 +1,6 @@
 import os
 import sys
+import subprocess
 import torch
 import numpy as np
 from contextlib import asynccontextmanager
@@ -7,9 +8,15 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List
 
-# The SFM repo's model code will be cloned into /app during Docker build
-# models_vit.py lives inside SFM-Finetune/
-sys.path.insert(0, "/app/SeismicFoundationModel/SFM-Finetune")
+# Clone SFM repo if not already present so models_vit.py is available
+SFM_REPO_PATH = "/app/SeismicFoundationModel"
+if not os.path.exists(SFM_REPO_PATH):
+    subprocess.run(
+        ["git", "clone", "https://github.com/shenghanlin/SeismicFoundationModel.git", SFM_REPO_PATH],
+        check=True
+    )
+
+sys.path.insert(0, f"{SFM_REPO_PATH}/SFM-Finetune")
 import models_vit
 
 model = None
