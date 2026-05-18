@@ -8,7 +8,6 @@ import timm.models.vision_transformer
 
 
 # ── Inline VisionTransformer from facebookresearch/mae ──────────────────────
-# Same architecture as sfm_server.py
 
 class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
     def __init__(self, global_pool=False, **kwargs):
@@ -60,16 +59,16 @@ MODEL_REGISTRY = {
 }
 
 
-# ── Training ─────────────────────────────────────────────────────────────────
+# ── Training ──────────────────────────────────────────────────────────────────
 
-def train(model, dataloader, optimizer, criterion, epochs):
+def train(model, dataloader, optimizer, criterion, epochs, run):
     model.train()
+    final_loss = 0
     for epoch in range(epochs):
         total_loss = 0
         for inputs, labels in dataloader:
             inputs = inputs.cuda()
             labels = labels.cuda()
-
             optimizer.zero_grad()
             features = model.forward_features(inputs)
             loss = criterion(features, labels)
@@ -78,9 +77,13 @@ def train(model, dataloader, optimizer, criterion, epochs):
             total_loss += loss.item()
 
         avg_loss = total_loss / len(dataloader)
+        final_loss = avg_loss
         print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
 
-    return model
+        # Log loss per epoch to the run
+        run.log_metrics({"train_loss": avg_loss}, step=epoch)
+
+    return model, final_loss
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -96,97 +99,115 @@ def main():
     lr = float(os.environ.get("LR", "1e-4"))
     output_name = os.environ.get("OUTPUT_MODEL_NAME", "sfm-base-finetuned")
 
-    # Step 1 — Download model from ML Repo
-    print(f"Downloading model from {model_fqn}...")
     client = get_client()
-    
-    # Create the directory first — SDK requires it to exist
-    os.makedirs("/tmp/sfm-model", exist_ok=True)
-    
-    download_info = client.get_model_version_by_fqn(model_fqn).download(
-        path="/tmp/sfm-model"
-    )
-    model_dir = download_info.download_dir
-    print(f"Model downloaded to {model_dir}")
 
-    # Step 2 — Build model architecture
-    if arch not in MODEL_REGISTRY:
-        raise ValueError(f"Unknown arch: {arch}. Choose from {list(MODEL_REGISTRY.keys())}")
-
-    m = MODEL_REGISTRY[arch](
-        num_classes=0,
-        global_pool=False,
-        in_chans=1,
-        img_size=img_size
-    )
-
-    # Step 3 — Load pretrained checkpoint
-    pth_files = glob.glob(os.path.join(model_dir, "*.pth"))
-    if not pth_files:
-        raise FileNotFoundError(
-            f"No .pth file in {model_dir}. Contents: {os.listdir(model_dir)}"
-        )
-
-    checkpoint_path = pth_files[0]
-    print(f"Loading checkpoint: {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location="cuda")
-    state_dict = checkpoint.get("model", checkpoint)
-    m.load_state_dict(state_dict, strict=False)
-    m.cuda()
-    print(f"Model loaded — arch={arch}, img_size={img_size}")
-
-    # Step 4 — Set up optimizer and loss
-    optimizer = torch.optim.AdamW(m.parameters(), lr=lr)
-
-    # embed_dim depends on arch
-    embed_dim = 768 if "base" in arch else 1024
-    criterion = nn.MSELoss()
-
-    # Step 5 — Create placeholder dataset
-    print("Creating placeholder dataset (random seismic-like data)...")
-    dataset = [
-        (
-            torch.randn(1, img_size, img_size),  # single channel seismic slice
-            torch.randn(embed_dim)                # target feature vector
-        )
-        for _ in range(100)
-    ]
-    dataloader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=4,
-        shuffle=True
-    )
-
-    # Step 6 — Fine-tune
-    print(f"Starting fine-tuning for {epochs} epochs...")
-    m = train(m, dataloader, optimizer, criterion, epochs)
-
-    # Step 7 — Save checkpoint
-    output_dir = "/output"
-    os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, "finetuned.pth")
-    torch.save({"model": m.state_dict()}, output_path)
-    print(f"Saved fine-tuned checkpoint to {output_path}")
-
-    # Step 8 — Log new model version to ML Repo
-    # This creates sfm-base-finetuned:1 in ML Repo
-    # with a run ID linking back to this job
-    print(f"Logging fine-tuned model to ML Repo as {output_name}...")
-    mv = client.log_model(
+    # Start a run — creates run ID that links to the model version
+    run = client.create_run(
         ml_repo="slb-pov",
-        name=output_name,
-        model_file_or_folder=output_dir,
-        framework=PyTorchFramework(),
-        metadata={
+        run_name="sfm-base-finetune"
+    )
+    print(f"Started run: {run.run_id}")
+
+    try:
+        # Log parameters
+        run.log_params({
             "base_model_fqn": model_fqn,
             "arch": arch,
             "img_size": img_size,
             "epochs": epochs,
             "lr": lr,
             "training_type": "encoder_finetune"
-        }
-    )
-    print(f"Done — logged as: {mv.fqn}")
+        })
+
+        # Step 1 — Download model from ML Repo
+        print(f"Downloading model from {model_fqn}...")
+        os.makedirs("/tmp/sfm-model", exist_ok=True)
+        download_info = client.get_model_version_by_fqn(model_fqn).download(
+            path="/tmp/sfm-model"
+        )
+        model_dir = download_info.download_dir
+        print(f"Model downloaded to {model_dir}")
+
+        # Step 2 — Build model architecture
+        if arch not in MODEL_REGISTRY:
+            raise ValueError(f"Unknown arch: {arch}")
+
+        m = MODEL_REGISTRY[arch](
+            num_classes=0,
+            global_pool=False,
+            in_chans=1,
+            img_size=img_size
+        )
+
+        # Step 3 — Load pretrained checkpoint
+        pth_files = glob.glob(os.path.join(model_dir, "*.pth"))
+        if not pth_files:
+            raise FileNotFoundError(
+                f"No .pth file in {model_dir}. Contents: {os.listdir(model_dir)}"
+            )
+
+        checkpoint_path = pth_files[0]
+        print(f"Loading checkpoint: {checkpoint_path}")
+        checkpoint = torch.load(checkpoint_path, map_location="cuda")
+        state_dict = checkpoint.get("model", checkpoint)
+        m.load_state_dict(state_dict, strict=False)
+        m.cuda()
+        print(f"Model loaded — arch={arch}, img_size={img_size}")
+
+        # Step 4 — Set up optimizer and loss
+        optimizer = torch.optim.AdamW(m.parameters(), lr=lr)
+        embed_dim = 768 if "base" in arch else 1024
+        criterion = nn.MSELoss()
+
+        # Step 5 — Create placeholder dataset
+        print("Creating placeholder dataset...")
+        dataset = [
+            (
+                torch.randn(1, img_size, img_size),
+                torch.randn(embed_dim)
+            )
+            for _ in range(100)
+        ]
+        dataloader = torch.utils.data.DataLoader(
+            dataset, batch_size=4, shuffle=True
+        )
+
+        # Step 6 — Fine-tune
+        print(f"Starting fine-tuning for {epochs} epochs...")
+        m, final_loss = train(m, dataloader, optimizer, criterion, epochs, run)
+
+        # Log final metrics
+        run.log_metrics({"final_loss": final_loss})
+
+        # Step 7 — Save checkpoint
+        output_dir = "/output"
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, "finetuned.pth")
+        torch.save({"model": m.state_dict()}, output_path)
+        print(f"Saved checkpoint to {output_path}")
+
+        # Step 8 — Log to ML Repo with run_id for lineage
+        print(f"Logging fine-tuned model as {output_name}...")
+        mv = client.log_model(
+            ml_repo="slb-pov",
+            name=output_name,
+            model_file_or_folder=output_dir,
+            framework=PyTorchFramework(),
+            run_id=run.run_id,
+            metadata={
+                "base_model_fqn": model_fqn,
+                "arch": arch,
+                "img_size": img_size,
+                "epochs": epochs,
+                "lr": lr,
+                "training_type": "encoder_finetune"
+            }
+        )
+        print(f"Done — logged as: {mv.fqn}")
+
+    finally:
+        # Always end the run even if training fails
+        run.end()
 
 
 if __name__ == "__main__":
