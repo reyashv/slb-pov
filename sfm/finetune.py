@@ -7,10 +7,6 @@ from functools import partial
 from truefoundry.ml import get_client, PyTorchFramework
 import timm.models.vision_transformer
 
-# Same VisionTransformer class as sfm_server.py
-# Copy the entire class here
-# ... (same as sfm_server.py)
-
 def train(model, dataloader, optimizer, criterion, epochs):
     model.train()
     for epoch in range(epochs):
@@ -62,7 +58,6 @@ def main():
     criterion = nn.MSELoss()  # placeholder — SLB would use their own loss
 
     # Dataset — placeholder using random data
-    # SLB would replace this with their actual seismic dataset
     print("Creating placeholder dataset...")
     dataset = [(
         torch.randn(1, img_size, img_size),
