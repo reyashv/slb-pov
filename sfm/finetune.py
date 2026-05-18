@@ -79,8 +79,6 @@ def train(model, dataloader, optimizer, criterion, epochs, run):
         avg_loss = total_loss / len(dataloader)
         final_loss = avg_loss
         print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
-
-        # Log loss per epoch to the run
         run.log_metrics({"train_loss": avg_loss}, step=epoch)
 
     return model, final_loss
@@ -186,14 +184,12 @@ def main():
         torch.save({"model": m.state_dict()}, output_path)
         print(f"Saved checkpoint to {output_path}")
 
-        # Step 8 — Log to ML Repo with run_id for lineage
+        # Step 8 — Log to ML Repo via run for lineage
         print(f"Logging fine-tuned model as {output_name}...")
-        mv = client.log_model(
-            ml_repo="slb-pov",
+        mv = run.log_model(
             name=output_name,
             model_file_or_folder=output_dir,
             framework=PyTorchFramework(),
-            run_id=run.run_id,
             metadata={
                 "base_model_fqn": model_fqn,
                 "arch": arch,
@@ -206,7 +202,6 @@ def main():
         print(f"Done — logged as: {mv.fqn}")
 
     finally:
-        # Always end the run even if training fails
         run.end()
 
 
