@@ -1,7 +1,7 @@
-# cache-bust: 2026-05-18-slb-pilot
+# cache-bust: slb-pilot-2026-05-18-v3
 truefoundry
-torch==2.4.0
-torchvision==0.19.0
+torch==2.5.1
+torchvision==0.20.1
 transformers @ git+https://github.com/huggingface/transformers.git
 accelerate>=0.30.0
 einops==0.8.0
