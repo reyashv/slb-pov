@@ -99,6 +99,10 @@ def main():
     # Step 1 — Download model from ML Repo
     print(f"Downloading model from {model_fqn}...")
     client = get_client()
+    
+    # Create the directory first — SDK requires it to exist
+    os.makedirs("/tmp/sfm-model", exist_ok=True)
+    
     download_info = client.get_model_version_by_fqn(model_fqn).download(
         path="/tmp/sfm-model"
     )
