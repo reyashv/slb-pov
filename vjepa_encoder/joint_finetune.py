@@ -43,20 +43,21 @@ def main():
             path="/tmp/vjepa-model"
         )
         model_dir = download_info.download_dir
+        print(f"Encoder downloaded to {model_dir}")
 
-        # Step 2 — Load encoder — NOT frozen
+        # Step 2 — Load encoder in float32 for training stability
+        # float16 causes NaN gradients during backprop
         print("Loading V-JEPA encoder (will be fine-tuned)...")
         processor = AutoVideoProcessor.from_pretrained(model_dir)
         encoder = AutoModel.from_pretrained(
             model_dir,
-            torch_dtype=torch.float16,
-            attn_implementation="sdpa"
+            torch_dtype=torch.float32,  # float32 for training stability
         ).cuda().train()
 
         # Step 3 — Build head
         head = nn.Linear(embed_dim, num_classes).cuda()
 
-        # Two separate optimizers — different learning rates
+        # Two separate optimizers
         encoder_optimizer = torch.optim.AdamW(
             encoder.parameters(), lr=encoder_lr
         )
@@ -91,22 +92,34 @@ def main():
                 head_optimizer.zero_grad()
 
                 embeddings = encoder.get_vision_features(**inputs)
-                pooled = embeddings.mean(dim=1).float()
+                pooled = embeddings.mean(dim=1)
 
                 logits = head(pooled)
                 loss = criterion(logits, torch.tensor([label]).cuda())
                 loss.backward()
 
+                # Gradient clipping to prevent exploding gradients
+                torch.nn.utils.clip_grad_norm_(encoder.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(head.parameters(), max_norm=1.0)
+
                 encoder_optimizer.step()
                 head_optimizer.step()
-                total_loss += float(loss.item())
+
+                loss_val = float(loss.item())
+                # Skip NaN losses
+                if loss_val == loss_val:
+                    total_loss += loss_val
 
             avg_loss = total_loss / len(dataset)
             final_loss = avg_loss
             print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
-            run.log_metrics({"train_loss": float(avg_loss)}, step=epoch)
 
-        run.log_metrics({"final_loss": float(final_loss)})
+            # Only log if valid number
+            if avg_loss == avg_loss and avg_loss != float('inf'):
+                run.log_metrics({"train_loss": float(avg_loss)}, step=epoch)
+
+        if final_loss == final_loss and final_loss != float('inf'):
+            run.log_metrics({"final_loss": float(final_loss)})
 
         # Step 6 — Save both encoder and decoder
         output_dir = "/output"
