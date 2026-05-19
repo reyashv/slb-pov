@@ -27,12 +27,12 @@ def main():
 
     try:
         run.log_params({
-            "base_encoder_fqn": model_fqn,
-            "embed_dim": embed_dim,
-            "num_classes": num_classes,
-            "epochs": epochs,
-            "encoder_lr": encoder_lr,
-            "head_lr": head_lr,
+            "base_encoder_fqn": str(model_fqn),
+            "embed_dim": int(embed_dim),
+            "num_classes": int(num_classes),
+            "epochs": int(epochs),
+            "encoder_lr": float(encoder_lr),
+            "head_lr": float(head_lr),
             "training_type": "joint_encoder_decoder"
         })
 
@@ -44,20 +44,19 @@ def main():
         )
         model_dir = download_info.download_dir
 
-        # Step 2 — Load encoder — NOT frozen this time
+        # Step 2 — Load encoder — NOT frozen
         print("Loading V-JEPA encoder (will be fine-tuned)...")
         processor = AutoVideoProcessor.from_pretrained(model_dir)
         encoder = AutoModel.from_pretrained(
             model_dir,
             torch_dtype=torch.float16,
             attn_implementation="sdpa"
-        ).cuda().train()  # train mode — gradients will flow
+        ).cuda().train()
 
         # Step 3 — Build head
         head = nn.Linear(embed_dim, num_classes).cuda()
 
         # Two separate optimizers — different learning rates
-        # Encoder gets much lower LR to avoid catastrophic forgetting
         encoder_optimizer = torch.optim.AdamW(
             encoder.parameters(), lr=encoder_lr
         )
@@ -78,9 +77,9 @@ def main():
 
         # Step 5 — Joint training
         print(f"Joint fine-tuning for {epochs} epochs...")
-        final_loss = 0
+        final_loss = 0.0
         for epoch in range(epochs):
-            total_loss = 0
+            total_loss = 0.0
             encoder.train()
             head.train()
 
@@ -88,11 +87,9 @@ def main():
                 inputs = processor(frames_np, return_tensors="pt")
                 inputs = {k: v.cuda() for k, v in inputs.items()}
 
-                # Gradients flow through BOTH encoder and head
                 encoder_optimizer.zero_grad()
                 head_optimizer.zero_grad()
 
-                # Convert to float16 for encoder
                 embeddings = encoder.get_vision_features(**inputs)
                 pooled = embeddings.mean(dim=1).float()
 
@@ -100,29 +97,26 @@ def main():
                 loss = criterion(logits, torch.tensor([label]).cuda())
                 loss.backward()
 
-                # Update both
                 encoder_optimizer.step()
                 head_optimizer.step()
-                total_loss += loss.item()
+                total_loss += float(loss.item())
 
             avg_loss = total_loss / len(dataset)
             final_loss = avg_loss
             print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
-            run.log_metrics({"train_loss": avg_loss}, step=epoch)
+            run.log_metrics({"train_loss": float(avg_loss)}, step=epoch)
 
-        run.log_metrics({"final_loss": final_loss})
+        run.log_metrics({"final_loss": float(final_loss)})
 
         # Step 6 — Save both encoder and decoder
         output_dir = "/output"
         os.makedirs(f"{output_dir}/encoder", exist_ok=True)
         os.makedirs(f"{output_dir}/decoder", exist_ok=True)
 
-        # Save encoder in HuggingFace format
         encoder.save_pretrained(f"{output_dir}/encoder")
         processor.save_pretrained(f"{output_dir}/encoder")
         print("Saved fine-tuned encoder")
 
-        # Save decoder head
         torch.save(head.state_dict(), f"{output_dir}/decoder/probe.pth")
         print("Saved fine-tuned decoder head")
 
@@ -133,10 +127,10 @@ def main():
             model_file_or_folder=f"{output_dir}/encoder",
             framework=PyTorchFramework(),
             metadata={
-                "base_model_fqn": model_fqn,
+                "base_model_fqn": str(model_fqn),
                 "training_type": "joint_encoder_decoder",
-                "epochs": epochs,
-                "encoder_lr": encoder_lr
+                "epochs": int(epochs),
+                "encoder_lr": float(encoder_lr)
             }
         )
         print(f"Encoder logged as: {mv_encoder.fqn}")
@@ -147,10 +141,10 @@ def main():
             model_file_or_folder=f"{output_dir}/decoder",
             framework=PyTorchFramework(),
             metadata={
-                "base_encoder_fqn": model_fqn,
+                "base_encoder_fqn": str(model_fqn),
                 "training_type": "joint_encoder_decoder",
-                "epochs": epochs,
-                "head_lr": head_lr
+                "epochs": int(epochs),
+                "head_lr": float(head_lr)
             }
         )
         print(f"Decoder logged as: {mv_decoder.fqn}")
