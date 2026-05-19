@@ -1,0 +1,65 @@
+type: service
+name: sfm-large-512
+image:
+  type: build
+  build_source:
+    type: git
+    repo_url: https://github.com/reyashv/slb-pov
+    ref: ae56faaa817a814b54e794d3c237b69b83608c1d
+    branch_name: main
+  build_spec:
+    type: tfy-python-buildpack
+    build_context_path: ./sfm/
+    command: >-
+      gunicorn -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+      sfm_server:app
+    python_version: '3.11'
+    python_dependencies:
+      type: pip
+      requirements_path: requirements.txt
+ports:
+  - host: sfm-large-512-dipo-ws-8000.slb-pilot.truefoundry.cloud
+    port: 8000
+    expose: true
+    protocol: TCP
+    app_protocol: http
+resources:
+  node:
+    type: node_selector
+    capacity_type: spot_fallback_on_demand
+  devices:
+    - name: L40S
+      type: nvidia_gpu
+      count: 1
+  cpu_request: 2
+  cpu_limit: 4
+  memory_request: 27200
+  memory_limit: 32000
+  ephemeral_storage_request: 20000
+  ephemeral_storage_limit: 100000
+env:
+  SFM_ARCH: vit_large_patch16
+  SFM_IMG_SIZE: '512'
+workspace_fqn: tfy-slb-demo:dipo-ws
+artifacts_download:
+  artifacts:
+    - type: truefoundry-artifact
+      artifact_version_fqn: model:slb-pilot/slb-pov/sfm-large-512:1
+      download_path_env_variable: MODEL_DIR
+  cache_volume:
+    cache_size: 200
+    storage_class: efs-sc
+replicas: 1
+auto_shutdown:
+  wait_time: 3600
+readiness_probe:
+  config:
+    type: http
+    path: /health
+    port: 8000
+  failure_threshold: 3
+  initial_delay_seconds: 30
+  period_seconds: 10
+  success_threshold: 1
+  timeout_seconds: 1
+allow_interception: false
