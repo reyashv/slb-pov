@@ -115,12 +115,10 @@ def main():
 
         # Step 7 — Log to ML Repo with run_id for lineage
         print(f"Logging probe model as {output_name}...")
-        mv = client.log_model(
-            ml_repo="slb-pov",
+        mv = run.log_model(
             name=output_name,
             model_file_or_folder=output_dir,
             framework=PyTorchFramework(),
-            run_id=run.run_id,
             metadata={
                 "base_encoder_fqn": model_fqn,
                 "embed_dim": embed_dim,
