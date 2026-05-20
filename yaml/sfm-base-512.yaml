@@ -10,7 +10,7 @@ image:
   build_spec:
     type: tfy-python-buildpack
     build_context_path: ./encoders/sfm/
-    command: gunicorn -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 server:app
+    command: gunicorn -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 sfm_server:app
     python_version: '3.11'
     python_dependencies:
       type: pip

@@ -10,7 +10,7 @@ image:
   build_spec:
     type: tfy-python-buildpack
     build_context_path: ./encoders/sfm/
-    command: gunicorn -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 sfm_server:app
+    command: gunicorn -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 server:app
     python_version: '3.11'
     python_dependencies:
       type: pip
@@ -37,11 +37,11 @@ resources:
   ephemeral_storage_limit: 100000
 env:
   SFM_ARCH: vit_base_patch16
-workspace_fqn: ${WORKSPACE_FQN}
+workspace_fqn: tfy-slb-demo:slb-ws
 artifacts_download:
   artifacts:
     - type: truefoundry-artifact
-      artifact_version_fqn: ${ARTIFACT_SFM_BASE}
+      artifact_version_fqn: model:slb-pilot/slb-pov/sfm-base:1
       download_path_env_variable: MODEL_DIR
   cache_volume:
     cache_size: 200
@@ -60,3 +60,4 @@ readiness_probe:
   success_threshold: 1
   timeout_seconds: 1
 allow_interception: false
+
