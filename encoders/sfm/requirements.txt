@@ -1,3 +1,4 @@
+# cache-bust: 2026-05-20-v1
 truefoundry
 torch==2.2.0
 torchvision==0.17.0
@@ -9,3 +10,4 @@ pydantic==2.7.0
 numpy==1.26.4
 scikit-learn
 tensorboard
+Pillow==10.3.0
