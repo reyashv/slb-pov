@@ -1,4 +1,4 @@
-# cache-bust: 2026-05-20-v4
+# cache-bust: 2026-05-20-v5
 torch==2.5.1
 torchvision==0.20.1
 transformers @ git+https://github.com/huggingface/transformers.git
