@@ -1,66 +1,93 @@
 # SFM PoV on TrueFoundry
 
-Deploy SFM and V-JEPA 2 models on TrueFoundry
-
+Deploy SFM and V-JEPA 2 encoders + decoder heads on TrueFoundry. Fine-tune jobs swap in seamlessly.
 
 ## Step 0: Setup
 
-- Clone:
 
-    ```shell
-    git clone git@github.com:reyashv/slb-pov.git
-    cd slb-pov
-    ```
+```bash
+git clone git@github.com:reyashv/slb-pov.git
+cd slb-pov
+```
 
-- Download SFM checkpoints, e.g. `SFM-base`: https://rec.ustc.edu.cn/share/5264ec70-e839-11ee-bbda-13c1c8639a68, into `./Data/` (gitignored):
 
-    ```shell
-    mkdir -p Data
-    ```
 
-- Export your tenant-specific values:
+Edit `env.sh`: set `WORKSPACE_FQN` to your workspace. Then:
 
-    ```shell
-    export WORKSPACE_FQN=tfy-slb-demo:<your-workspace>
-    export MODEL_FQN=<your-model-fqn>
-    ```
+
+```bash
+source env.sh
+```
+
+
+
+Artifacts (`model:slb-pilot/slb-pov/...`) must already exist in the `slb-pilot` ML Repo. If not, run `upload-scripts/upload_vjepa.py` (auto from HuggingFace) and `upload-scripts/upload-sfm.py` (needs Baidu checkpoints, see script).
 
 ## Step 1: Deploy
 
-- Deploy yaml using TrueFoundry CLI (example: `sfm` model)
+Apply all services and jobs:
 
-    ```shell
-    tfy apply -f sfm-deploy.yaml
-    ```
 
-## Step 2: Inference
+```bash
+for f in yaml/*.yaml; do envsubst < "$f" > /tmp/x.yaml && tfy apply -f /tmp/x.yaml; done
+```
 
-- Use inference script from this repo 
-    
-    ```shell
-    python testing-files/test-sfm.py
-    ```
 
-## Step 3: Fine-tune
 
-- Submit the fine-tune Job (Facies, joint mode):
+Or one at a time:
 
-    ```shell
-    tfy apply -f sfm-finetune.yaml
-    ```
 
-- Watch progress in TF UI → Jobs. Note the output FQNs from the Models tab.
+```bash
+envsubst < yaml/sfm-base.yaml > /tmp/x.yaml && tfy apply -f /tmp/x.yaml
+```
 
-## Step 4: Redeploy with fine-tuned weights
 
-- Edit `sfm-deploy.yaml`, swap `artifact_version_fqn` to the new fine-tuned FQN, then:
 
-    ```shell
-    tfy apply -f sfm-deploy.yaml
-    ```
+What's in `yaml/`:
 
-- Re-run Step 2 to confirm new output.
+- `sfm-*`, `vjepa2-*`: encoder services
+- `decoder-{classify,detect,segment}`: head only, calls encoder over internal DNS
+- `fused-{classify,detect,segment}`: encoder + head in one pod
+- `sfm-finetune`, `vjepa-{probe,joint}-*`: fine-tune jobs
 
-## Step 5: Metrics + monitoring
+Validate everything:
 
-- TF UI → Service → Monitoring tab. GPU/memory/latency live, exportable to Grafana. Training curves under Jobs → Run → Metrics.
+
+```bash
+python testing/validate_slb.py    # health + inference across all services
+python testing/test_sfm.py        # SFM encoders only, prints feature dim + sample
+```
+
+
+
+> Hostnames in the test scripts are hardcoded to `dipo-ws`. For a different workspace, sed the file or set the hostnames via env var.
+
+## Step 2: Fine-tune
+
+Already deployed in Step 1. Trigger from TF UI → Jobs → `sfm-finetune` → Run, or via CLI. When done, the job logs the new artifact FQN, e.g.:
+
+
+```
+Done — logged as: model:slb-pilot/slb-pov/sfm-base-finetuned:3
+```
+
+
+
+Also visible in TF UI → Models.
+
+## Step 3: Redeploy with fine-tuned weights
+
+Override the artifact var for one apply:
+
+
+```bash
+ARTIFACT_SFM_BASE=model:slb-pilot/slb-pov/sfm-base-finetuned:3 \
+  envsubst < yaml/sfm-base.yaml > /tmp/x.yaml && tfy apply -f /tmp/x.yaml
+```
+
+
+Re-run the validation script to confirm new output. The encoder pod rolls a new version; one-click rollback in the Versions tab.
+
+## Step 4: Metrics + monitoring
+
+TF UI → Service → Monitoring tab. GPU / memory / latency live, exportable to Grafana. Training curves under Jobs → Run → Metrics.
