@@ -1,0 +1,43 @@
+type: job
+name: sfm-finetune
+image:
+  type: build
+  build_source:
+    type: git
+    repo_url: https://github.com/reyashv/slb-pov
+    ref: main
+    branch_name: main
+  build_spec:
+    type: tfy-python-buildpack
+    build_context_path: ./encoders/sfm/
+    command: python finetune.py
+    python_version: '3.11'
+    python_dependencies:
+      type: pip
+      requirements_path: requirements.txt
+trigger:
+  type: manual
+resources:
+  node:
+    type: node_selector
+    capacity_type: spot_fallback_on_demand
+  devices:
+    - name: L4
+      type: nvidia_gpu
+      count: 1
+  cpu_request: 2
+  cpu_limit: 4
+  memory_request: 13600
+  memory_limit: 16000
+  ephemeral_storage_request: 20000
+  ephemeral_storage_limit: 100000
+env:
+  LR: '0.0001'
+  EPOCHS: '10'
+  SFM_ARCH: vit_base_patch16
+  MODEL_DIR: ${ARTIFACT_SFM_BASE}
+  SFM_IMG_SIZE: '224'
+  DATA_ARTIFACT_FQN: ${ARTIFACT_SFM_DATA}
+  OUTPUT_MODEL_NAME: sfm-base-finetuned
+workspace_fqn: ${WORKSPACE_FQN}
+retries: 0

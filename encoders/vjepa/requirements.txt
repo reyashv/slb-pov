@@ -1,0 +1,14 @@
+# cache-bust: slb-pilot-2026-05-18-v3
+truefoundry
+torch==2.5.1
+torchvision==0.20.1
+transformers @ git+https://github.com/huggingface/transformers.git
+accelerate>=0.30.0
+einops==0.8.0
+timm==0.9.16
+fastapi==0.111.0
+uvicorn==0.29.0
+gunicorn==22.0.0
+pydantic==2.7.0
+numpy==1.26.4
+Pillow==10.3.0

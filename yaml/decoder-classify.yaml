@@ -1,0 +1,57 @@
+type: service
+name: decoder-classify
+image:
+  type: build
+  build_source:
+    type: git
+    repo_url: https://github.com/reyashv/slb-pov
+    ref: main
+    branch_name: main
+  build_spec:
+    type: tfy-python-buildpack
+    build_context_path: ./decoder/
+    command: gunicorn -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 server:app
+    python_version: '3.11'
+    python_dependencies:
+      type: pip
+      requirements_path: requirements.txt
+ports:
+  - host: decoder-classify-dipo-ws-8000.slb-pilot.truefoundry.cloud
+    port: 8000
+    expose: true
+    protocol: TCP
+    app_protocol: http
+resources:
+  node:
+    type: node_selector
+    capacity_type: spot_fallback_on_demand
+  devices:
+    - name: L4
+      type: nvidia_gpu
+      count: 1
+  cpu_request: 2
+  cpu_limit: 4
+  memory_request: 13600
+  memory_limit: 16000
+  ephemeral_storage_request: 20000
+  ephemeral_storage_limit: 100000
+env:
+  HEAD_TYPE: classify
+  EMBED_DIM: '1024'
+  NUM_CLASSES: '10'
+  ENCODER_URL: ${ENCODER_URL_VITL}
+workspace_fqn: ${WORKSPACE_FQN}
+replicas: 1
+auto_shutdown:
+  wait_time: 3600
+readiness_probe:
+  config:
+    type: http
+    path: /health
+    port: 8000
+  failure_threshold: 3
+  initial_delay_seconds: 30
+  period_seconds: 10
+  success_threshold: 1
+  timeout_seconds: 1
+allow_interception: false

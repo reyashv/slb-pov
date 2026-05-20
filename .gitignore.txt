@@ -1,0 +1,6 @@
+checkpoints/
+*.pth
+*.dat
+__pycache__/
+*.pyc
+.env
