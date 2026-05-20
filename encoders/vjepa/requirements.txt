@@ -1,7 +1,7 @@
-# cache-bust: 2026-05-20-v5
+# cache-bust: 2026-05-20-v6
 truefoundry
-torch==2.5.1
-torchvision==0.20.1
+torch==2.6.0
+torchvision==0.21.0
 transformers @ git+https://github.com/huggingface/transformers.git
 accelerate>=0.30.0
 einops==0.8.0
