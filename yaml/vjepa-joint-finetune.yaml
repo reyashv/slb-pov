@@ -5,8 +5,8 @@ image:
   build_source:
     type: git
     repo_url: https://github.com/reyashv/slb-pov
-    ref: main
-    branch_name: main
+    ref: c7c0e8828a3dc895230f5d702f422ecdec042ecd
+    branch_name: restructure/slb-pov
   build_spec:
     type: tfy-python-buildpack
     build_context_path: ./encoders/vjepa/

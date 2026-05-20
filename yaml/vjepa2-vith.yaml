@@ -5,8 +5,8 @@ image:
   build_source:
     type: git
     repo_url: https://github.com/reyashv/slb-pov
-    ref: main
-    branch_name: main
+    ref: c7c0e8828a3dc895230f5d702f422ecdec042ecd
+    branch_name: restructure/slb-pov
   build_spec:
     type: tfy-python-buildpack
     build_context_path: ./encoders/vjepa/
@@ -16,7 +16,7 @@ image:
       type: pip
       requirements_path: requirements.txt
 ports:
-  - host: vjepa2-vith-dipo-ws-8000.slb-pilot.truefoundry.cloud
+  - host: vjepa2-vith-slb-ws-8000.slb-pilot.truefoundry.cloud
     port: 8000
     expose: true
     protocol: TCP
