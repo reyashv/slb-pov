@@ -84,7 +84,7 @@ class SeismicDatDataset(Dataset):
         seismic = np.fromfile(self.data_files[idx], dtype=np.float32)
         seismic = seismic.reshape(768, 768)
 
-        # Resize to model input size (224 for Base, 512 for Base-512)
+        # Resize to model input size
         img = Image.fromarray(seismic)
         img = img.resize((self.img_size, self.img_size))
         seismic = np.array(img, dtype=np.float32)
@@ -169,7 +169,6 @@ def train(model, classifier, dataloader, optimizer_enc, optimizer_cls,
 def main():
     from truefoundry.ml import get_client, PyTorchFramework
 
-    # Read env vars
     model_fqn = os.environ["MODEL_DIR"]
     arch = os.environ.get("SFM_ARCH", "vit_base_patch16")
     img_size = int(os.environ.get("SFM_IMG_SIZE", "224"))
@@ -214,10 +213,14 @@ def main():
         if data_artifact_fqn:
             print(f"Downloading data from {data_artifact_fqn}...")
             os.makedirs("/tmp/sfm-data", exist_ok=True)
-            data_download = client.get_artifact_version_by_fqn(data_artifact_fqn).download(
+            result = client.get_artifact_version_by_fqn(data_artifact_fqn).download(
                 path="/tmp/sfm-data"
             )
-            data_artifact_dir = data_download.download_dir
+            # Handle both string and object return types
+            if isinstance(result, str):
+                data_artifact_dir = result
+            else:
+                data_artifact_dir = result.download_dir
             data_dir = os.path.join(data_artifact_dir, "seismic")
             label_dir = os.path.join(data_artifact_dir, "label")
             print(f"Data downloaded to {data_artifact_dir}")
@@ -255,7 +258,6 @@ def main():
         classifier = nn.Linear(embed_dim, num_classes).cuda()
 
         # Step 6 — Optimizers
-        # Encoder gets lower LR to avoid destroying pretrained features
         optimizer_enc = torch.optim.AdamW(m.parameters(), lr=lr)
         optimizer_cls = torch.optim.Adam(classifier.parameters(), lr=lr * 10)
         criterion = nn.CrossEntropyLoss()
