@@ -1,7 +1,7 @@
-# cache-bust: 2026-05-20-v6
-torch==2.6.0
-torchvision==0.21.0
-transformers @ git+https://github.com/huggingface/transformers.git
+# cache-bust: 2026-05-20-v7
+torch==2.5.1
+torchvision==0.20.1
+transformers @ git+https://github.com/huggingface/transformers.git@2991f8dd6446d9cc307f7a885c3175e6a418aa42
 accelerate>=0.30.0
 einops==0.8.0
 timm==0.9.16
