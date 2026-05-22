@@ -5,7 +5,7 @@ image:
   build_source:
     type: git
     repo_url: https://github.com/reyashv/slb-pov
-    ref: c7c0e8828a3dc895230f5d702f422ecdec042ecd
+    ref: f45f12ff6b4861b155cbbbc288efa3496f9001d4
     branch_name: restructure/slb-pov
   build_spec:
     type: tfy-python-buildpack
@@ -33,11 +33,14 @@ resources:
   ephemeral_storage_limit: 100000
 env:
   LR: '0.0001'
-  EPOCHS: '10'
+  EPOCHS: '200'
+  BATCH_SIZE: '8'
+  CHECKPOINT_EVERY: '5'
   SFM_ARCH: vit_base_patch16
   MODEL_DIR: ${ARTIFACT_SFM_BASE}
   SFM_IMG_SIZE: '224'
   DATA_ARTIFACT_FQN: ${ARTIFACT_SFM_DATA}
   OUTPUT_MODEL_NAME: sfm-base-finetuned
 workspace_fqn: ${WORKSPACE_FQN}
-retries: 0
+retries: 3
+timeout: 32400
