@@ -58,7 +58,7 @@ MODEL_REGISTRY = {
 
 # ── Checkpoint config ─────────────────────────────────────────────────────────
 
-CHECKPOINT_NAME        = "sfm-finetune-checkpoint"
+CHECKPOINT_NAME        = "sfm-large-512-finetune-checkpoint"
 CHECKPOINT_DIR         = "/tmp/sfm-checkpoint"
 CHECKPOINT_FILE        = os.path.join(CHECKPOINT_DIR, "checkpoint.pth")
 MAX_CHECKPOINT_SEARCH  = 50  # search versions 50 down to 1
