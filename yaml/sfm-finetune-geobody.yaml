@@ -1,0 +1,46 @@
+type: job
+name: sfm-finetune-geobody
+image:
+  type: build
+  build_source:
+    type: git
+    repo_url: https://github.com/reyashv/slb-pov
+    ref: f6ee0a2027190a30bc9e1de7597dd9052296f38b
+    branch_name: restructure/slb-pov
+  build_spec:
+    type: tfy-python-buildpack
+    build_context_path: ./encoders/sfm/
+    command: python finetune_hf.py
+    python_version: '3.11'
+    python_dependencies:
+      type: pip
+      requirements_path: requirements.txt
+trigger:
+  type: manual
+resources:
+  node:
+    type: node_selector
+    capacity_type: spot_fallback_on_demand
+  devices:
+    - name: L40S
+      type: nvidia_gpu
+      count: 1
+  cpu_request: 4
+  cpu_limit: 8
+  memory_request: 27200
+  memory_limit: 32000
+  ephemeral_storage_request: 20000
+  ephemeral_storage_limit: 100000
+env:
+  LR: '0.0001'
+  EPOCHS: '10'
+  BATCH_SIZE: '8'
+  CHECKPOINT_EVERY: '1'
+  SFM_ARCH: vit_large_patch16
+  MODEL_DIR: ${ARTIFACT_SFM_LARGE}
+  SFM_IMG_SIZE: '224'
+  NUM_CLASSES: '2'
+  OUTPUT_MODEL_NAME: sfm-large-geobody-finetuned
+workspace_fqn: ${WORKSPACE_FQN}
+retries: 3
+timeout: 36000
