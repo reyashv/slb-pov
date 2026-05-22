@@ -1,0 +1,42 @@
+type: job
+name: sfm-batch-infer
+image:
+  type: build
+  build_source:
+    type: git
+    repo_url: https://github.com/reyashv/slb-pov
+    ref: dfdfa03099afde5786d86d7f253479f158276d96
+    branch_name: restructure/slb-pov
+  build_spec:
+    type: tfy-python-buildpack
+    build_context_path: ./encoders/sfm/
+    command: python batch_infer.py
+    python_version: '3.11'
+    python_dependencies:
+      type: pip
+      requirements_path: requirements.txt
+trigger:
+  type: manual
+resources:
+  node:
+    type: node_selector
+    capacity_type: spot_fallback_on_demand
+  devices:
+    - name: L4
+      type: nvidia_gpu
+      count: 1
+  cpu_request: 2
+  cpu_limit: 4
+  memory_request: 13600
+  memory_limit: 16000
+  ephemeral_storage_request: 20000
+  ephemeral_storage_limit: 100000
+env:
+  ENCODER_URL: http://sfm-large.slb-ws.svc.cluster.local:8000
+  DATA_ARTIFACT_FQN: ${ARTIFACT_SFM_DATA}
+  OUTPUT_ARTIFACT_NAME: sfm-batch-embeddings
+  SFM_IMG_SIZE: '224'
+  REQUEST_TIMEOUT: '60'
+workspace_fqn: ${WORKSPACE_FQN}
+retries: 3
+timeout: 3600
