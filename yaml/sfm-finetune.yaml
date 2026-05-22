@@ -5,7 +5,7 @@ image:
   build_source:
     type: git
     repo_url: https://github.com/reyashv/slb-pov
-    ref: f45f12ff6b4861b155cbbbc288efa3496f9001d4
+    ref: dfdfa03099afde5786d86d7f253479f158276d96
     branch_name: restructure/slb-pov
   build_spec:
     type: tfy-python-buildpack
@@ -22,25 +22,25 @@ resources:
     type: node_selector
     capacity_type: spot_fallback_on_demand
   devices:
-    - name: L4
+    - name: L40S
       type: nvidia_gpu
       count: 1
   cpu_request: 2
   cpu_limit: 4
-  memory_request: 13600
-  memory_limit: 16000
+  memory_request: 27200
+  memory_limit: 32000
   ephemeral_storage_request: 20000
   ephemeral_storage_limit: 100000
 env:
   LR: '0.0001'
   EPOCHS: '200'
-  BATCH_SIZE: '8'
+  BATCH_SIZE: '4'
   CHECKPOINT_EVERY: '5'
-  SFM_ARCH: vit_base_patch16
-  MODEL_DIR: ${ARTIFACT_SFM_BASE}
-  SFM_IMG_SIZE: '224'
+  SFM_ARCH: vit_large_patch16
+  MODEL_DIR: ${ARTIFACT_SFM_LARGE_512}
+  SFM_IMG_SIZE: '512'
   DATA_ARTIFACT_FQN: ${ARTIFACT_SFM_DATA}
-  OUTPUT_MODEL_NAME: sfm-base-finetuned
+  OUTPUT_MODEL_NAME: sfm-large-512-finetuned
 workspace_fqn: ${WORKSPACE_FQN}
 retries: 3
-timeout: 32400
+timeout: 36000
