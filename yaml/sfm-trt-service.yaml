@@ -5,12 +5,13 @@ image:
   build_source:
     type: git
     repo_url: https://github.com/reyashv/slb-pov
-    ref: 78941c0167652f951841333964f5ba4b1d33f696
+    ref: c001301ba720c6c3cd330940f782f8827965d2f0
     branch_name: restructure/slb-pov
   build_spec:
     type: dockerfile
     build_context_path: ./encoders/sfm/
     dockerfile_path: ./encoders/sfm/Dockerfile.trt
+    command: gunicorn -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 sfm_server_trt:app
 ports:
   - host: sfm-base-trt-slb-ws-8000.slb-pilot.truefoundry.cloud
     port: 8000
@@ -49,4 +50,3 @@ readiness_probe:
   success_threshold: 1
   timeout_seconds: 1
 allow_interception: false
-command: gunicorn -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 sfm_server_trt:app
