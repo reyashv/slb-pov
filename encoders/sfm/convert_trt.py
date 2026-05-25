@@ -1,0 +1,205 @@
+"""
+convert_trt.py
+
+Converts the SFM ViT model to a TensorRT FP16 engine.
+Runs as a one-time TFY job. Saves the TRT engine to ML Repo.
+
+Steps:
+  1. Download SFM model from ML Repo
+  2. Load PyTorch model
+  3. Export to ONNX (opset 14)
+  4. Build TensorRT FP16 engine from ONNX
+  5. Save engine to ML Repo as artifact
+"""
+
+import os
+import glob
+import torch
+import torch.nn as nn
+import numpy as np
+from functools import partial
+import timm.models.vision_transformer
+
+# ── VisionTransformer (same as sfm_server.py) ────────────────────────────────
+
+class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
+    def __init__(self, global_pool=False, **kwargs):
+        super().__init__(**kwargs)
+        self.global_pool = global_pool
+        if self.global_pool:
+            norm_layer = kwargs['norm_layer']
+            embed_dim = kwargs['embed_dim']
+            self.fc_norm = norm_layer(embed_dim)
+            del self.norm
+
+    def forward_features(self, x):
+        B = x.shape[0]
+        x = self.patch_embed(x)
+        cls_tokens = self.cls_token.expand(B, -1, -1)
+        x = torch.cat((cls_tokens, x), dim=1)
+        x = x + self.pos_embed
+        x = self.pos_drop(x)
+        for blk in self.blocks:
+            x = blk(x)
+        if self.global_pool:
+            x = x[:, 1:, :].mean(dim=1)
+            return self.fc_norm(x)
+        else:
+            x = self.norm(x)
+            return x[:, 0]
+
+    def forward(self, x):
+        return self.forward_features(x)
+
+
+def vit_base_patch16(**kwargs):
+    return VisionTransformer(
+        patch_size=16, embed_dim=768, depth=12, num_heads=12,
+        mlp_ratio=4, qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+
+def vit_large_patch16(**kwargs):
+    return VisionTransformer(
+        patch_size=16, embed_dim=1024, depth=24, num_heads=16,
+        mlp_ratio=4, qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+
+MODEL_REGISTRY = {
+    "vit_base_patch16": vit_base_patch16,
+    "vit_large_patch16": vit_large_patch16,
+}
+
+
+def main():
+    import tensorrt as trt
+    from truefoundry.ml import get_client, ArtifactPath
+
+    model_fqn  = os.environ["MODEL_DIR"]
+    arch       = os.environ.get("SFM_ARCH", "vit_base_patch16")
+    img_size   = int(os.environ.get("SFM_IMG_SIZE", "224"))
+    output_name = os.environ.get("OUTPUT_ARTIFACT_NAME", "sfm-base-trt-engine")
+
+    client = get_client()
+    run = client.create_run(ml_repo="slb-pov", run_name="sfm-trt-conversion")
+    print(f"Started run: {run.run_id}")
+
+    try:
+        run.log_params({
+            "model_fqn": model_fqn,
+            "arch": arch,
+            "img_size": img_size,
+            "precision": "fp16",
+        })
+
+        # ── Step 1: Download model ──
+        print(f"Downloading model from {model_fqn}...")
+        os.makedirs("/tmp/sfm-model", exist_ok=True)
+        download_info = client.get_model_version_by_fqn(model_fqn).download(path="/tmp/sfm-model")
+        model_dir = download_info.download_dir
+
+        # ── Step 2: Load PyTorch model ──
+        print(f"Loading {arch}...")
+        m = MODEL_REGISTRY[arch](
+            num_classes=0, global_pool=False, in_chans=1, img_size=img_size
+        )
+
+        pth_files = glob.glob(os.path.join(model_dir, "*.pth"))
+        if not pth_files:
+            raise FileNotFoundError(f"No .pth in {model_dir}")
+
+        checkpoint = torch.load(pth_files[0], map_location="cuda")
+        state_dict = checkpoint.get("model", checkpoint)
+        m.load_state_dict(state_dict, strict=False)
+        m = m.cuda().eval().half()  # FP16
+        print(f"Model loaded — arch={arch}, img_size={img_size}")
+
+        # ── Step 3: Export to ONNX ──
+        onnx_path = "/tmp/sfm.onnx"
+        dummy_input = torch.randn(1, 1, img_size, img_size, dtype=torch.float16).cuda()
+
+        print("Exporting to ONNX...")
+        torch.onnx.export(
+            m,
+            dummy_input,
+            onnx_path,
+            opset_version=14,
+            input_names=["input"],
+            output_names=["features"],
+            dynamic_axes={
+                "input": {0: "batch_size"},
+                "features": {0: "batch_size"},
+            },
+            do_constant_folding=True,
+        )
+        print(f"ONNX exported to {onnx_path}")
+
+        # Verify ONNX
+        import onnx
+        onnx_model = onnx.load(onnx_path)
+        onnx.checker.check_model(onnx_model)
+        print("ONNX model verified ✅")
+
+        # ── Step 4: Build TensorRT engine ──
+        trt_path = "/tmp/sfm.trt"
+        TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
+
+        print("Building TensorRT FP16 engine (this takes 5-15 minutes)...")
+        builder = trt.Builder(TRT_LOGGER)
+        network = builder.create_network(
+            1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
+        )
+        parser = trt.OnnxParser(network, TRT_LOGGER)
+
+        with open(onnx_path, "rb") as f:
+            if not parser.parse(f.read()):
+                for i in range(parser.num_errors):
+                    print(f"ONNX parse error: {parser.get_error(i)}")
+                raise RuntimeError("Failed to parse ONNX model")
+
+        config = builder.create_builder_config()
+        config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 4 * (1 << 30))  # 4GB
+        config.set_flag(trt.BuilderFlag.FP16)
+
+        # Dynamic batch size profile
+        profile = builder.create_optimization_profile()
+        profile.set_shape("input",
+            min=(1, 1, img_size, img_size),
+            opt=(4, 1, img_size, img_size),
+            max=(16, 1, img_size, img_size)
+        )
+        config.add_optimization_profile(profile)
+
+        engine_bytes = builder.build_serialized_network(network, config)
+        if engine_bytes is None:
+            raise RuntimeError("Failed to build TensorRT engine")
+
+        with open(trt_path, "wb") as f:
+            f.write(engine_bytes)
+        print(f"TensorRT engine saved to {trt_path} ✅")
+
+        # ── Step 5: Save engine to ML Repo ──
+        print(f"Logging TRT engine to ML Repo as {output_name}...")
+        av = run.log_artifact(
+            name=output_name,
+            artifact_paths=[ArtifactPath(src=trt_path, dest="sfm.trt")],
+            metadata={
+                "arch": arch,
+                "img_size": img_size,
+                "precision": "fp16",
+                "source_model_fqn": model_fqn,
+            }
+        )
+        print(f"Done — TRT engine logged as: {av.fqn}")
+        run.log_metrics({"conversion_success": 1})
+
+    except Exception as e:
+        print(f"Conversion failed: {e}")
+        run.log_metrics({"conversion_success": 0})
+        raise
+
+    finally:
+        run.end()
+
+
+if __name__ == "__main__":
+    main()

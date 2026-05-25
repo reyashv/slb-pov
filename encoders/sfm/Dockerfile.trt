@@ -1,0 +1,23 @@
+# Use NVIDIA PyTorch container — has TensorRT, CUDA, cuDNN pre-installed
+FROM nvcr.io/nvidia/pytorch:24.12-py3
+
+WORKDIR /app
+
+# Install additional dependencies
+RUN pip install --no-cache-dir \
+    truefoundry \
+    fastapi==0.111.0 \
+    uvicorn==0.29.0 \
+    gunicorn==22.0.0 \
+    pydantic==2.7.0 \
+    numpy==1.26.4 \
+    timm==0.9.16 \
+    onnx==1.16.0 \
+    onnxruntime-gpu==1.18.0 \
+    Pillow==10.3.0
+
+# Copy server code
+COPY sfm_server_trt.py .
+COPY convert_trt.py .
+
+EXPOSE 8000
