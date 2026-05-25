@@ -1,0 +1,44 @@
+type: job
+name: sfm-trt-compare
+image:
+  type: build
+  build_source:
+    type: git
+    repo_url: https://github.com/reyashv/slb-pov
+    ref: c001301ba720c6c3cd330940f782f8827965d2f0
+    branch_name: restructure/slb-pov
+  build_spec:
+    type: tfy-python-buildpack
+    build_context_path: ./encoders/sfm/
+    command: python batch_infer_compare.py
+    python_version: '3.11'
+    python_dependencies:
+      type: pip
+      requirements_path: requirements.txt
+trigger:
+  type: manual
+resources:
+  node:
+    type: node_selector
+    capacity_type: spot_fallback_on_demand
+  devices:
+    - name: L4
+      type: nvidia_gpu
+      count: 1
+  cpu_request: 2
+  cpu_limit: 4
+  memory_request: 13600
+  memory_limit: 16000
+  ephemeral_storage_request: 20000
+  ephemeral_storage_limit: 100000
+env:
+  PYTORCH_URL: http://sfm-base.slb-ws.svc.cluster.local:8000
+  TRT_URL: http://sfm-base-trt.slb-ws.svc.cluster.local:8000
+  HF_DATASET: porestar/seismicfoundationmodel-interpolation
+  HF_SPLIT: train
+  SFM_IMG_SIZE: '224'
+  REQUEST_TIMEOUT: '60'
+  MAX_SLICES: '3500'
+workspace_fqn: ${WORKSPACE_FQN}
+retries: 1
+timeout: 7200
