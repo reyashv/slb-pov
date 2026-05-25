@@ -1,11 +1,3 @@
-"""
-sfm_server_trt.py
-
-SFM encoder server using TensorRT FP16 engine.
-Same API as sfm_server.py — drop-in replacement.
-Expected speedup: 4-8x over vanilla PyTorch.
-"""
-
 import os
 import numpy as np
 import torch
