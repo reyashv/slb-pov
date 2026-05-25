@@ -1,0 +1,37 @@
+type: job
+name: sfm-trt-convert
+image:
+  type: build
+  build_source:
+    type: git
+    repo_url: https://github.com/reyashv/slb-pov
+    ref: 78941c0167652f951841333964f5ba4b1d33f696
+    branch_name: restructure/slb-pov
+  build_spec:
+    type: dockerfile
+    build_context_path: ./encoders/sfm/
+    dockerfile_path: ./encoders/sfm/Dockerfile.trt
+trigger:
+  type: manual
+resources:
+  node:
+    type: node_selector
+    capacity_type: on_demand
+  devices:
+    - name: L4
+      type: nvidia_gpu
+      count: 1
+  cpu_request: 4
+  cpu_limit: 8
+  memory_request: 27200
+  memory_limit: 32000
+  ephemeral_storage_request: 50000
+  ephemeral_storage_limit: 100000
+env:
+  MODEL_DIR: ${ARTIFACT_SFM_BASE}
+  SFM_ARCH: vit_base_patch16
+  SFM_IMG_SIZE: '224'
+  OUTPUT_ARTIFACT_NAME: sfm-base-trt-engine
+workspace_fqn: ${WORKSPACE_FQN}
+retries: 1
+timeout: 7200
