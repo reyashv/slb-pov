@@ -1,16 +1,16 @@
 type: job
-name: sfm-batch-infer-interpolation
+name: sfm-sustained-infer
 image:
   type: build
   build_source:
     type: git
     repo_url: https://github.com/reyashv/slb-pov
-    ref: f6ee0a2027190a30bc9e1de7597dd9052296f38b
+    ref: 02525ccb14d5e2a35a50d6d51fb98f152035ae10
     branch_name: restructure/slb-pov
   build_spec:
     type: tfy-python-buildpack
     build_context_path: ./encoders/sfm/
-    command: python batch_infer_hf.py
+    command: python batch_infer.py
     python_version: '3.11'
     python_dependencies:
       type: pip
@@ -25,8 +25,8 @@ resources:
     - name: L4
       type: nvidia_gpu
       count: 1
-  cpu_request: 4
-  cpu_limit: 8
+  cpu_request: 2
+  cpu_limit: 4
   memory_request: 13600
   memory_limit: 16000
   ephemeral_storage_request: 20000
@@ -35,10 +35,10 @@ env:
   ENCODER_URL: http://sfm-large.slb-ws.svc.cluster.local:8000
   HF_DATASET: porestar/seismicfoundationmodel-interpolation
   HF_SPLIT: train
-  OUTPUT_ARTIFACT_NAME: sfm-interpolation-embeddings
   SFM_IMG_SIZE: '224'
   REQUEST_TIMEOUT: '60'
-  MAX_SLICES: '8000'
+  TARGET_HOURS: '1.5'
+  SAVE_EVERY: '500'
 workspace_fqn: ${WORKSPACE_FQN}
 retries: 3
-timeout: 7200
+timeout: 21600
