@@ -1,4 +1,4 @@
-from locust import HttpUser, task, between
+from locust import HttpUser, task, constant
 
 SINGLE_PAYLOAD = {
     "data": [0.5] * (224 * 224),
@@ -7,7 +7,7 @@ SINGLE_PAYLOAD = {
 }
 
 class SFMUser(HttpUser):
-    wait_time = 0
+    wait_time = constant(0)  # no wait between requests
 
     @task
     def infer_single(self):
