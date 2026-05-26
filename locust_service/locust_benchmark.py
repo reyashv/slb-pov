@@ -7,7 +7,7 @@ SINGLE_PAYLOAD = {
 }
 
 class SFMUser(HttpUser):
-    wait_time = between(0.01, 0.05)
+    wait_time = 0
 
     @task
     def infer_single(self):
