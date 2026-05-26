@@ -1,0 +1,36 @@
+type: service
+name: locust-sfm
+image:
+  type: build
+  build_source:
+    type: git
+    repo_url: https://github.com/reyashv/slb-pov
+    ref: 59c2c3c77d2ebc518028dd28f2c5e888e1305456
+    branch_name: restructure/slb-pov
+  build_spec:
+    type: tfy-python-buildpack
+    build_context_path: ./locust_service/
+    command: locust -f locust_benchmark.py --host http://sfm-base.slb-ws.svc.cluster.local:8000
+    python_version: '3.11'
+    python_dependencies:
+      type: pip
+      requirements_path: requirements.txt
+ports:
+  - host: locust-sfm-slb-ws-8089.slb-pilot.truefoundry.cloud
+    port: 8089
+    expose: true
+    protocol: TCP
+    app_protocol: http
+workspace_fqn: ${WORKSPACE_FQN}
+replicas: 1
+resources:
+  node:
+    type: node_selector
+    capacity_type: spot_fallback_on_demand
+  cpu_request: 2
+  cpu_limit: 4
+  memory_request: 4000
+  memory_limit: 8000
+  ephemeral_storage_request: 5000
+  ephemeral_storage_limit: 10000
+allow_interception: false
