@@ -5,7 +5,7 @@ image:
   build_source:
     type: git
     repo_url: https://github.com/reyashv/slb-pov
-    ref: c7c0e8828a3dc895230f5d702f422ecdec042ecd
+    ref: f45f12ff6b4861b155cbbbc288efa3496f9001d4
     branch_name: restructure/slb-pov
   build_spec:
     type: tfy-python-buildpack
@@ -47,7 +47,12 @@ artifacts_download:
   cache_volume:
     cache_size: 200
     storage_class: efs-sc
-replicas: 1
+replicas:
+  min_replicas: 1
+  max_replicas: 3
+  metrics:
+    type: rps
+    value: 3
 auto_shutdown:
   wait_time: 3600
 readiness_probe:
