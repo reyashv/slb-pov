@@ -4,22 +4,21 @@ import time
 import numpy as np
 import requests
 from truefoundry.ml import get_client, ArtifactPath
+from datasets import load_dataset
 
 # ── Config ────────────────────────────────────────────────────────────────────
 ENCODER_URL      = os.environ.get("ENCODER_URL", "http://sfm-large.slb-ws.svc.cluster.local:8000")
 HF_DATASET       = os.environ.get("HF_DATASET", "porestar/seismicfoundationmodel-interpolation")
 HF_SPLIT         = os.environ.get("HF_SPLIT", "train")
-OUTPUT_NAME      = os.environ.get("OUTPUT_ARTIFACT_NAME", "sfm-interpolation-embeddings")
 IMG_SIZE         = int(os.environ.get("SFM_IMG_SIZE", "224"))
 TIMEOUT          = int(os.environ.get("REQUEST_TIMEOUT", "60"))
-MAX_SLICES       = int(os.environ.get("MAX_SLICES", "8000"))  # process all by default
+TARGET_HOURS     = float(os.environ.get("TARGET_HOURS", "1.5"))  # run for 1.5 hours
+SAVE_EVERY       = int(os.environ.get("SAVE_EVERY", "500"))      # save progress every 500 slices
 
-OUTPUT_DIR       = "/tmp/sfm-output"
-PROGRESS_FILE    = os.path.join(OUTPUT_DIR, "progress.json")
-EMBEDDINGS_FILE  = os.path.join(OUTPUT_DIR, "embeddings.json")
-PROGRESS_ARTIFACT = "sfm-interpolation-infer-progress"
+OUTPUT_DIR        = "/tmp/sfm-sustained"
+PROGRESS_FILE     = os.path.join(OUTPUT_DIR, "progress.json")
+PROGRESS_ARTIFACT = "sfm-sustained-infer-progress"
 MAX_VERSION_SEARCH = 20
-SAVE_EVERY       = 50  # save progress every 50 slices
 
 
 # ── Progress helpers ──────────────────────────────────────────────────────────
@@ -35,30 +34,35 @@ def load_progress(client):
             if os.path.exists(PROGRESS_FILE):
                 with open(PROGRESS_FILE, "r") as f:
                     progress = json.load(f)
-                processed = set(progress.get("processed", []))
-                print(f"Found progress: {len(processed)} slices already done (from {fqn})")
-                return processed
+                total_processed = progress.get("total_processed", 0)
+                elapsed = progress.get("elapsed_seconds", 0)
+                print(f"Resuming — {total_processed} slices done, {elapsed/3600:.2f}h elapsed")
+                return total_processed, elapsed
         except Exception:
             continue
     print("No existing progress — starting from scratch")
-    return set()
+    return 0, 0
 
 
-def save_progress(client, run, processed_set, embeddings):
+def save_progress(client, run, total_processed, elapsed_seconds, latencies):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+    avg_lat = sum(latencies) / len(latencies) if latencies else 0
     with open(PROGRESS_FILE, "w") as f:
-        json.dump({"processed": list(processed_set)}, f)
-    with open(EMBEDDINGS_FILE, "w") as f:
-        json.dump(embeddings, f)
+        json.dump({
+            "total_processed": total_processed,
+            "elapsed_seconds": elapsed_seconds,
+            "avg_latency_s": round(avg_lat, 4),
+        }, f)
+
     av = run.log_artifact(
         name=PROGRESS_ARTIFACT,
-        artifact_paths=[
-            ArtifactPath(src=PROGRESS_FILE, dest="progress.json"),
-            ArtifactPath(src=EMBEDDINGS_FILE, dest="embeddings.json"),
-        ],
-        metadata={"processed_count": len(processed_set)}
+        artifact_paths=[ArtifactPath(src=PROGRESS_FILE, dest="progress.json")],
+        metadata={
+            "total_processed": total_processed,
+            "elapsed_hours": round(elapsed_seconds / 3600, 2),
+        }
     )
-    print(f"Progress saved — {len(processed_set)} slices done → {av.fqn}")
+    print(f"Progress saved — {total_processed} slices, {elapsed_seconds/3600:.2f}h → {av.fqn}")
 
 
 # ── Inference ─────────────────────────────────────────────────────────────────
@@ -77,124 +81,112 @@ def main():
     from datasets import load_dataset
 
     client = get_client()
-    run = client.create_run(ml_repo="slb-pov", run_name="sfm-interpolation-batch-infer")
+    run = client.create_run(ml_repo="slb-pov", run_name="sfm-sustained-inference")
     print(f"Started run: {run.run_id}")
+    print(f"Target duration: {TARGET_HOURS} hours")
 
     try:
         run.log_params({
             "encoder_url": ENCODER_URL,
-            "hf_dataset": HF_DATASET,
-            "hf_split": HF_SPLIT,
+            "dataset": HF_DATASET,
+            "target_hours": TARGET_HOURS,
             "img_size": IMG_SIZE,
-            "max_slices": MAX_SLICES,
         })
 
-        # ── a. Load dataset from HuggingFace ──
-        print(f"Loading {HF_DATASET} (split={HF_SPLIT}) from HuggingFace...")
+        # Load dataset
+        print(f"Loading {HF_DATASET} from HuggingFace...")
         dataset = load_dataset(HF_DATASET, split=HF_SPLIT).with_format(type="numpy")
-        total = min(len(dataset), MAX_SLICES)
-        print(f"Dataset size: {len(dataset)}, processing: {total}")
+        dataset_size = len(dataset)
+        print(f"Dataset: {dataset_size} slices (will loop until {TARGET_HOURS}h reached)")
 
-        # ── c. Load progress ──
-        processed = load_progress(client)
+        # Load progress — resume if retrying
+        total_processed, prev_elapsed = load_progress(client)
 
-        embeddings = {}
-        if os.path.exists(EMBEDDINGS_FILE):
-            with open(EMBEDDINGS_FILE, "r") as f:
-                embeddings = json.load(f)
-
-        # ── Run inference ──
-        remaining_indices = [i for i in range(total) if str(i) not in processed]
-        print(f"Processing {len(remaining_indices)} remaining slices ({len(processed)} already done)...")
-
+        target_seconds = TARGET_HOURS * 3600
+        job_start = time.time()
         latencies = []
         errors = 0
+        loop = 0
 
-        for i, idx in enumerate(remaining_indices):
-            try:
-                item = dataset[idx]
+        print(f"\nStarting sustained inference...")
+        print(f"Will run until {TARGET_HOURS} hours of processing time is reached\n")
 
-                # Get seismic array
-                seismic = item["seismic"].astype(np.float32)
-                if seismic.ndim == 3:
-                    seismic = seismic[:, :, 0]
+        while True:
+            elapsed_total = prev_elapsed + (time.time() - job_start)
 
-                # Normalize
-                seismic = (seismic - seismic.min()) / (seismic.max() - seismic.min() + 1e-8)
+            # Check if we've hit the target duration
+            if elapsed_total >= target_seconds:
+                print(f"\nTarget duration reached: {elapsed_total/3600:.2f}h ✅")
+                break
 
-                # Flatten for API
-                data = seismic.flatten().tolist()
-                h, w = seismic.shape
+            loop += 1
+            print(f"Loop {loop} — elapsed: {elapsed_total/3600:.2f}h / {TARGET_HOURS}h")
 
-                features, latency = infer_slice(data, h, TIMEOUT)
+            for i in range(dataset_size):
+                # Check time every 100 slices
+                if i % 100 == 0:
+                    elapsed_total = prev_elapsed + (time.time() - job_start)
+                    if elapsed_total >= target_seconds:
+                        break
 
-                embeddings[str(idx)] = {
-                    "features": features,
-                    "latency_s": round(latency, 3),
-                    "dim": len(features),
-                }
-                processed.add(str(idx))
-                latencies.append(latency)
+                try:
+                    item = dataset[i]
+                    seismic = item["seismic"].astype(np.float32)
+                    if seismic.ndim == 3:
+                        seismic = seismic[:, :, 0]
+                    seismic = (seismic - seismic.min()) / (seismic.max() - seismic.min() + 1e-8)
+                    data = seismic.flatten().tolist()
+                    h, w = seismic.shape
 
-                print(f"[{len(processed)}/{total}] slice_{idx} — {latency:.3f}s, dim={len(features)}")
+                    _, latency = infer_slice(data, h, TIMEOUT)
+                    latencies.append(latency)
+                    total_processed += 1
 
-                # ── b. Save progress every N slices ──
-                if (i + 1) % SAVE_EVERY == 0:
-                    save_progress(client, run, processed, embeddings)
-                    avg_lat = sum(latencies) / len(latencies)
+                except Exception as e:
+                    errors += 1
+                    continue
+
+                # Save progress every N slices
+                if total_processed % SAVE_EVERY == 0:
+                    elapsed_total = prev_elapsed + (time.time() - job_start)
+                    avg_lat = sum(latencies[-SAVE_EVERY:]) / len(latencies[-SAVE_EVERY:])
+                    throughput = len(latencies) / (time.time() - job_start)
+
+                    print(f"[{total_processed} slices | {elapsed_total/3600:.2f}h] "
+                          f"avg: {avg_lat:.3f}s | throughput: {throughput:.1f}/s | errors: {errors}")
+
+                    save_progress(client, run, total_processed, elapsed_total, latencies)
+
                     run.log_metrics({
-                        "slices_processed": len(processed),
-                        "avg_latency_s": round(avg_lat, 3),
+                        "total_processed": total_processed,
+                        "elapsed_hours": round(elapsed_total / 3600, 3),
+                        "avg_latency_s": round(avg_lat, 4),
+                        "throughput_per_sec": round(throughput, 2),
                         "errors": errors,
-                    }, step=len(processed))
+                    }, step=total_processed)
 
-            except Exception as e:
-                errors += 1
-                print(f"ERROR on slice {idx}: {e} — skipping")
-                continue
-
-        # ── Final save ──
-        save_progress(client, run, processed, embeddings)
-
-        # ── Log final output artifact ──
-        final_output = os.path.join(OUTPUT_DIR, "final_embeddings.json")
-        with open(final_output, "w") as f:
-            json.dump({
-                "total_slices": total,
-                "processed": len(processed),
-                "errors": errors,
-                "img_size": IMG_SIZE,
-                "encoder_url": ENCODER_URL,
-                "dataset": HF_DATASET,
-                "embeddings": embeddings,
-            }, f)
-
-        av = run.log_artifact(
-            name=OUTPUT_NAME,
-            artifact_paths=[ArtifactPath(src=final_output, dest="final_embeddings.json")],
-            metadata={
-                "total_slices": total,
-                "processed": len(processed),
-                "errors": errors,
-                "dataset": HF_DATASET,
-            }
-        )
-
+        # Final summary
+        elapsed_total = prev_elapsed + (time.time() - job_start)
         avg_lat = sum(latencies) / len(latencies) if latencies else 0
-        print(f"\n{'='*55}")
-        print(f"Batch inference complete")
-        print(f"  Dataset:         {HF_DATASET}")
-        print(f"  Total slices:    {total}")
-        print(f"  Processed:       {len(processed)}")
-        print(f"  Errors:          {errors}")
-        print(f"  Avg latency:     {avg_lat:.3f}s")
-        print(f"  Output artifact: {av.fqn}")
-        print(f"{'='*55}")
+        throughput = len(latencies) / (time.time() - job_start) if time.time() > job_start else 0
+
+        print(f"\n{'='*60}")
+        print(f"Sustained inference complete")
+        print(f"  Total slices processed: {total_processed}")
+        print(f"  Total time:             {elapsed_total/3600:.2f} hours")
+        print(f"  Avg latency:            {avg_lat:.4f}s")
+        print(f"  Throughput:             {throughput:.2f} slices/sec")
+        print(f"  Errors:                 {errors}")
+        print(f"  Dataset loops:          {loop}")
+        print(f"{'='*60}")
 
         run.log_metrics({
-            "final_slices_processed": len(processed),
+            "final_total_processed": total_processed,
+            "final_elapsed_hours": round(elapsed_total / 3600, 3),
+            "final_avg_latency_s": round(avg_lat, 4),
+            "final_throughput": round(throughput, 2),
             "final_errors": errors,
-            "final_avg_latency_s": round(avg_lat, 3),
+            "dataset_loops": loop,
         })
 
     finally:
