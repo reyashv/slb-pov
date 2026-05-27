@@ -5,7 +5,7 @@ image:
   build_source:
     type: git
     repo_url: https://github.com/reyashv/slb-pov
-    ref: be9d7dc8920cfb19d5b70216d07db31da6041239
+    ref: ed5324fbe2c53f1ab2bfa9993f75c1e17399b9b1
     branch_name: restructure/slb-pov
   build_spec:
     type: dockerfile
@@ -40,7 +40,7 @@ resources:
 readiness_probe:
   config:
     type: http
-    path: /health
+    path: /v2/health/ready
     port: 8000
   failure_threshold: 3
   initial_delay_seconds: 120
