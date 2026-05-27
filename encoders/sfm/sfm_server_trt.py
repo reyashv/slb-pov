@@ -30,7 +30,7 @@ def load_trt_engine():
     client = get_client()
     os.makedirs("/tmp/trt-engine", exist_ok=True)
     av = client.get_artifact_version_by_fqn(fqn=engine_artifact_fqn)
-    av.download(path="/tmp/trt-engine")
+    av.download(path="/tmp/trt-engine", overwrite=True)
 
     trt_path = "/tmp/trt-engine/sfm.trt"
     if not os.path.exists(trt_path):
