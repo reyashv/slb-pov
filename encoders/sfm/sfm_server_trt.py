@@ -1,27 +1,26 @@
 """
-SFM encoder server using TensorRT FP16 engine.
-Supports both single slice (/infer) and batch inference (/batch_infer).
+sfm_server_trt.py — PyTriton TRT inference server for SFM
+
+Replaces FastAPI with PyTriton which handles:
+- Thread-safe concurrent TRT execution via context pool
+- Dynamic batching — groups incoming requests automatically
+- Higher throughput under concurrent load
+
+Port: 8000 (HTTP), 8001 (gRPC)
+Health: GET http://host:8000/v2/health/ready
+Infer:  POST http://host:8000/v2/models/sfm_large/infer
 """
 
 import os
+import glob
 import numpy as np
 import torch
-from contextlib import asynccontextmanager
-from fastapi import FastAPI
-from pydantic import BaseModel
-from typing import List
 from truefoundry.ml import get_client
 
-model = None
-context = None
-engine_global = None
-DEVICE = "cuda"
 
+# ── Load TRT engine ───────────────────────────────────────────────────────────
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global model, context, engine_global
-
+def load_trt_engine():
     import tensorrt as trt
 
     engine_artifact_fqn = os.environ["TRT_ENGINE_FQN"]
@@ -35,7 +34,7 @@ async def lifespan(app: FastAPI):
 
     trt_path = "/tmp/trt-engine/sfm.trt"
     if not os.path.exists(trt_path):
-        raise FileNotFoundError(f"sfm.trt not found after download")
+        raise FileNotFoundError("sfm.trt not found after download")
 
     print("Loading TensorRT engine...")
     TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
@@ -44,101 +43,79 @@ async def lifespan(app: FastAPI):
     with open(trt_path, "rb") as f:
         engine = runtime.deserialize_cuda_engine(f.read())
 
-    context = engine.create_execution_context()
-    engine_global = engine
-
-    print(f"TRT engine ready — img_size={img_size}, precision=FP16")
-    yield
-    del context
-    del engine
+    print(f"TRT engine loaded — img_size={img_size}")
+    return engine
 
 
-app = FastAPI(
-    root_path=os.getenv("TFY_SERVICE_ROOT_PATH", ""),
-    lifespan=lifespan
-)
+# ── Inference function ────────────────────────────────────────────────────────
 
-
-# ── Single slice inference ────────────────────────────────────────────────────
-
-class InferRequest(BaseModel):
-    data: List[float]
-    height: int
-    width: int
-
-
-class InferResponse(BaseModel):
-    features: List[float]
-
-
-@app.get("/health")
-def health():
-    return {"healthy": True}
-
-
-@app.post("/infer", response_model=InferResponse)
-def infer(req: InferRequest):
-    arr = np.array(req.data, dtype=np.float16).reshape(1, 1, req.height, req.width)
-    input_tensor = torch.from_numpy(arr).cuda()
-
-    engine = context.engine
-    output_shape = tuple(engine.get_tensor_shape(engine.get_tensor_name(1)))
-    output_shape = (1,) + output_shape[1:]
-    output_tensor = torch.empty(output_shape, dtype=torch.float16, device="cuda")
-
-    context.set_tensor_address(engine.get_tensor_name(0), input_tensor.data_ptr())
-    context.set_tensor_address(engine.get_tensor_name(1), output_tensor.data_ptr())
-
-    context.execute_async_v3(torch.cuda.current_stream().cuda_stream)
-    torch.cuda.synchronize()
-
-    features = output_tensor.squeeze(0).float().cpu().tolist()
-    return InferResponse(features=features)
-
-
-# ── Batch inference — N slices in one TRT forward pass ───────────────────────
-
-class BatchInferRequest(BaseModel):
-    slices: List[List[float]]
-    height: int
-    width: int
-
-
-class BatchInferResponse(BaseModel):
-    features: List[List[float]]
-    batch_size: int
-
-
-@app.post("/batch_infer", response_model=BatchInferResponse)
-def batch_infer(req: BatchInferRequest):
+def make_infer_fn(engine):
     """
-    True batch inference — processes N slices in a single TRT forward pass.
-    More efficient than N separate /infer calls.
+    Returns the inference function for PyTriton.
+    PyTriton calls this with a batched numpy array — handles thread safety.
     """
-    n = len(req.slices)
+    import tensorrt as trt
 
-    # Stack all slices into batch tensor [N, 1, H, W] as FP16
-    arrays = [
-        np.array(s, dtype=np.float16).reshape(req.height, req.width)
-        for s in req.slices
-    ]
-    batch = np.stack(arrays, axis=0)              # [N, H, W]
-    input_tensor = torch.from_numpy(batch).unsqueeze(1).cuda()  # [N, 1, H, W]
+    def infer_fn(inputs):
+        # inputs is a list of dicts, one per request in the batch
+        # Each dict has key "INPUT" with shape [1, 1, H, W]
+        batch = np.concatenate([inp["INPUT"] for inp in inputs], axis=0)  # [N, 1, H, W]
+        n = batch.shape[0]
 
-    # Get output shape and allocate output tensor
-    engine = context.engine
-    output_shape = tuple(engine.get_tensor_shape(engine.get_tensor_name(1)))
-    embed_dim = output_shape[1]
-    output_tensor = torch.empty((n, embed_dim), dtype=torch.float16, device="cuda")
+        input_tensor = torch.from_numpy(batch.astype(np.float16)).cuda()
 
-    # Set dynamic batch size and tensor addresses
-    context.set_input_shape(engine.get_tensor_name(0), (n, 1, req.height, req.width))
-    context.set_tensor_address(engine.get_tensor_name(0), input_tensor.data_ptr())
-    context.set_tensor_address(engine.get_tensor_name(1), output_tensor.data_ptr())
+        context = engine.create_execution_context()
+        embed_dim = tuple(engine.get_tensor_shape(engine.get_tensor_name(1)))[1]
+        output_tensor = torch.empty((n, embed_dim), dtype=torch.float16, device="cuda")
 
-    # Run inference
-    context.execute_async_v3(torch.cuda.current_stream().cuda_stream)
-    torch.cuda.synchronize()
+        context.set_input_shape(engine.get_tensor_name(0), (n, 1, batch.shape[2], batch.shape[3]))
+        context.set_tensor_address(engine.get_tensor_name(0), input_tensor.data_ptr())
+        context.set_tensor_address(engine.get_tensor_name(1), output_tensor.data_ptr())
 
-    features = output_tensor.float().cpu().tolist()
-    return BatchInferResponse(features=features, batch_size=n)
+        context.execute_async_v3(torch.cuda.current_stream().cuda_stream)
+        torch.cuda.synchronize()
+
+        features = output_tensor.float().cpu().numpy()  # [N, embed_dim]
+
+        # Return list of outputs, one per request
+        return [{"OUTPUT": features[i:i+1]} for i in range(n)]
+
+    return infer_fn
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def main():
+    from pytriton.triton import Triton, TritonConfig
+    from pytriton.model_config import ModelConfig, Tensor
+    from pytriton.model_config.triton_model_config import DynamicBatcher
+
+    img_size = int(os.environ.get("SFM_IMG_SIZE", "224"))
+    embed_dim = 1024  # vit_large embed dim
+
+    engine = load_trt_engine()
+    infer_fn = make_infer_fn(engine)
+
+    print("Starting PyTriton server...")
+    with Triton(config=TritonConfig(http_port=8000, grpc_port=8001)) as triton:
+        triton.bind(
+            model_name="sfm_large",
+            infer_func=infer_fn,
+            inputs=[
+                Tensor(name="INPUT", dtype=np.float32, shape=(1, img_size, img_size)),
+            ],
+            outputs=[
+                Tensor(name="OUTPUT", dtype=np.float32, shape=(embed_dim,)),
+            ],
+            config=ModelConfig(
+                max_batch_size=32,
+                batcher=DynamicBatcher(
+                    max_queue_delay_microseconds=5000,  # wait up to 5ms to fill batch
+                ),
+            ),
+        )
+        triton.serve()
+
+
+if __name__ == "__main__":
+    main()
