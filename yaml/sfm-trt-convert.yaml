@@ -1,11 +1,11 @@
 type: job
-name: sfm-trt-convert
+name: sfm-trt-convert-large
 image:
   type: build
   build_source:
     type: git
     repo_url: https://github.com/reyashv/slb-pov
-    ref: c001301ba720c6c3cd330940f782f8827965d2f0
+    ref: be9d7dc8920cfb19d5b70216d07db31da6041239
     branch_name: restructure/slb-pov
   build_spec:
     type: dockerfile
@@ -19,20 +19,20 @@ resources:
     type: node_selector
     capacity_type: on_demand
   devices:
-    - name: L4
+    - name: L40S
       type: nvidia_gpu
       count: 1
   cpu_request: 4
   cpu_limit: 8
   memory_request: 27200
-  memory_limit: 32000
+  memory_limit: 48000
   ephemeral_storage_request: 50000
   ephemeral_storage_limit: 100000
 env:
-  MODEL_DIR: ${ARTIFACT_SFM_BASE}
-  SFM_ARCH: vit_base_patch16
+  MODEL_DIR: ${ARTIFACT_SFM_LARGE}
+  SFM_ARCH: vit_large_patch16
   SFM_IMG_SIZE: '224'
-  OUTPUT_ARTIFACT_NAME: sfm-base-trt-engine
+  OUTPUT_ARTIFACT_NAME: sfm-large-trt-engine
 workspace_fqn: ${WORKSPACE_FQN}
 retries: 1
 timeout: 7200
