@@ -1,53 +1,47 @@
 """
 locust_benchmark.py — SFM PyTriton batch size benchmark
-
-Uses tritonclient to send requests to PyTriton server.
-Control batch size via BATCH_SIZE env var in TFY UI.
-
-Default: BATCH_SIZE=1
+Uses Locust's built-in HTTP client to call Triton's HTTP REST API directly.
+Control batch size via BATCH_SIZE env var.
 """
 
 import os
+import json
 import numpy as np
 from locust import HttpUser, task, constant
-import tritonclient.http as httpclient
 
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "1"))
-HOST = os.environ.get("TRITON_HOST", "sfm-large-trt.slb-ws.svc.cluster.local")
-PORT = int(os.environ.get("TRITON_PORT", "8000"))
 MODEL_NAME = "sfm_large"
 IMG_SIZE = 224
 
-print(f"Running with BATCH_SIZE={BATCH_SIZE}, host={HOST}:{PORT}")
+print(f"Running with BATCH_SIZE={BATCH_SIZE}")
 
-# Prepare input data
-SINGLE_SLICE = np.zeros((1, IMG_SIZE, IMG_SIZE), dtype=np.float32)
-BATCH_INPUT = np.zeros((BATCH_SIZE, 1, IMG_SIZE, IMG_SIZE), dtype=np.float32)
+# Build Triton HTTP REST payload
+# POST /v2/models/{model}/infer
+def make_payload(batch_size):
+    data = np.zeros((batch_size, 1, IMG_SIZE, IMG_SIZE), dtype=np.float32)
+    return {
+        "inputs": [
+            {
+                "name": "INPUT",
+                "shape": [batch_size, 1, IMG_SIZE, IMG_SIZE],
+                "datatype": "FP32",
+                "data": data.flatten().tolist()
+            }
+        ],
+        "outputs": [{"name": "OUTPUT"}]
+    }
+
+PAYLOAD = make_payload(BATCH_SIZE)
+ENDPOINT = f"/v2/models/{MODEL_NAME}/infer"
 
 
 class SFMTritonUser(HttpUser):
     wait_time = constant(0)
 
-    def on_start(self):
-        self.triton_client = httpclient.InferenceServerClient(
-            url=f"{HOST}:{PORT}",
-            verbose=False
-        )
-
     @task
     def infer(self):
-        inputs = [
-            httpclient.InferInput("INPUT", BATCH_INPUT.shape, "FP32")
-        ]
-        inputs[0].set_data_from_numpy(BATCH_INPUT)
-
-        outputs = [
-            httpclient.InferRequestedOutput("OUTPUT")
-        ]
-
-        result = self.triton_client.infer(
-            model_name=MODEL_NAME,
-            inputs=inputs,
-            outputs=outputs
+        self.client.post(
+            ENDPOINT,
+            json=PAYLOAD,
+            name=f"/infer [bs={BATCH_SIZE}]"
         )
-        _ = result.as_numpy("OUTPUT")
