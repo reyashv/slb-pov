@@ -5,12 +5,12 @@ image:
   build_source:
     type: git
     repo_url: https://github.com/reyashv/slb-pov
-    ref: 59c2c3c77d2ebc518028dd28f2c5e888e1305456
+    ref: ed5324fbe2c53f1ab2bfa9993f75c1e17399b9b1
     branch_name: restructure/slb-pov
   build_spec:
     type: tfy-python-buildpack
     build_context_path: ./locust_service/
-    command: locust -f locust_benchmark.py --host http://sfm-base.slb-ws.svc.cluster.local:8000
+    command: locust -f locust_benchmark.py --host http://sfm-large.slb-ws.svc.cluster.local:8000
     python_version: '3.11'
     python_dependencies:
       type: pip
@@ -21,6 +21,9 @@ ports:
     expose: true
     protocol: TCP
     app_protocol: http
+env:
+  BATCH_SIZE: "1"
+  TRITON_HOST: sfm-large-trt.slb-ws.svc.cluster.local
 workspace_fqn: ${WORKSPACE_FQN}
 replicas: 1
 resources:
