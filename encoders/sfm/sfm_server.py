@@ -112,6 +112,8 @@ app = FastAPI(
 )
 
 
+# ── Single slice inference ────────────────────────────────────────────────────
+
 class InferRequest(BaseModel):
     data: List[float]
     height: int
@@ -134,3 +136,39 @@ def infer(req: InferRequest):
     with torch.no_grad():
         features = model.forward_features(tensor)
     return InferResponse(features=features.squeeze(0).cpu().tolist())
+
+
+# ── Batch inference — N slices in one GPU forward pass ───────────────────────
+
+class BatchInferRequest(BaseModel):
+    slices: List[List[float]]  # list of N slices, each a flat array
+    height: int
+    width: int
+
+
+class BatchInferResponse(BaseModel):
+    features: List[List[float]]  # list of N feature vectors
+    batch_size: int
+
+
+@app.post("/batch_infer", response_model=BatchInferResponse)
+def batch_infer(req: BatchInferRequest):
+    """
+    True batch inference — processes N slices in a single GPU forward pass.
+    More efficient than N separate /infer calls.
+    Per-slice latency drops significantly with larger batches.
+    """
+    n = len(req.slices)
+    # Stack all slices into a single batch tensor [N, 1, H, W]
+    arrays = [
+        np.array(s, dtype=np.float32).reshape(req.height, req.width)
+        for s in req.slices
+    ]
+    batch = np.stack(arrays, axis=0)        # [N, H, W]
+    tensor = torch.from_numpy(batch).unsqueeze(1).cuda()  # [N, 1, H, W]
+    with torch.no_grad():
+        features = model.forward_features(tensor)  # [N, embed_dim]
+    return BatchInferResponse(
+        features=features.cpu().tolist(),
+        batch_size=n
+    )
