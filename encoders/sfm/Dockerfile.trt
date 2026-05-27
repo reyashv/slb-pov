@@ -10,6 +10,8 @@ RUN pip install --no-cache-dir \
     tensorrt \
     numpy==1.26.4 \
     torch==2.2.0 \
+    timm==0.9.12 \
+    onnx==1.16.0 \
     Pillow==10.3.0
 
 # Copy server code
