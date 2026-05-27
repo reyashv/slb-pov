@@ -1,11 +1,11 @@
 type: service
-name: sfm-base-trt
+name: sfm-large-trt
 image:
   type: build
   build_source:
     type: git
     repo_url: https://github.com/reyashv/slb-pov
-    ref: c001301ba720c6c3cd330940f782f8827965d2f0
+    ref: be9d7dc8920cfb19d5b70216d07db31da6041239
     branch_name: restructure/slb-pov
   build_spec:
     type: dockerfile
@@ -13,39 +13,37 @@ image:
     dockerfile_path: ./encoders/sfm/Dockerfile.trt
     command: gunicorn -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 sfm_server_trt:app
 ports:
-  - host: sfm-base-trt-slb-ws-8000.slb-pilot.truefoundry.cloud
+  - host: sfm-large-trt-slb-ws-8000.slb-pilot.truefoundry.cloud
     port: 8000
     expose: true
     protocol: TCP
     app_protocol: http
-resources:
-  node:
-    type: node_selector
-    capacity_type: spot_fallback_on_demand
-  devices:
-    - name: L4
-      type: nvidia_gpu
-      count: 1
-  cpu_request: 2
-  cpu_limit: 4
-  memory_request: 13600
-  memory_limit: 16000
-  ephemeral_storage_request: 20000
-  ephemeral_storage_limit: 100000
 env:
   TRT_ENGINE_FQN: ${TRT_ENGINE_FQN}
   SFM_IMG_SIZE: '224'
 workspace_fqn: ${WORKSPACE_FQN}
 replicas: 1
-auto_shutdown:
-  wait_time: 3600
+resources:
+  node:
+    type: node_selector
+    capacity_type: spot_fallback_on_demand
+  devices:
+    - name: L40S
+      type: nvidia_gpu
+      count: 1
+  cpu_request: 2
+  cpu_limit: 4
+  memory_request: 27200
+  memory_limit: 48000
+  ephemeral_storage_request: 20000
+  ephemeral_storage_limit: 100000
 readiness_probe:
   config:
     type: http
     path: /health
     port: 8000
   failure_threshold: 3
-  initial_delay_seconds: 60
+  initial_delay_seconds: 120
   period_seconds: 10
   success_threshold: 1
   timeout_seconds: 1
