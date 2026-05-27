@@ -18,4 +18,4 @@ COPY convert_trt.py .
 
 EXPOSE 8000 8001
 
-CMD ["python", "sfm_server_trt.py"]
+CMD ["python3", "sfm_server_trt.py"]
