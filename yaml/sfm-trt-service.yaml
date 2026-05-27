@@ -11,7 +11,7 @@ image:
     type: dockerfile
     build_context_path: ./encoders/sfm/
     dockerfile_path: ./encoders/sfm/Dockerfile.trt
-    command: gunicorn -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 sfm_server_trt:app
+    command: python sfm_server_trt.py
 ports:
   - host: sfm-large-trt-slb-ws-8000.slb-pilot.truefoundry.cloud
     port: 8000
