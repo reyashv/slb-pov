@@ -15,7 +15,7 @@ def preprocess():
     try:
         os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-        for split in ["validation"]:
+        for split in ["train","validation"]:
             print(f"Loading {split} split from HuggingFace...")
             dataset = load_dataset(HF_DATASET, split=split).with_format(type="numpy")
             print(f"Loaded {len(dataset)} samples — preprocessing...")
