@@ -1,0 +1,34 @@
+type: job
+name: sfm-preprocess-dataset
+image:
+  type: build
+  build_source:
+    type: git
+    repo_url: https://github.com/reyashv/slb-pov
+    ref: cd19a949f7afa1c9d05337c9661eab23e0ccb1bf
+    branch_name: restructure/slb-pov
+  build_spec:
+    type: tfy-python-buildpack
+    build_context_path: ./encoders/sfm/
+    command: python preprocess_dataset.py
+    python_version: '3.11'
+    python_dependencies:
+      type: pip
+      requirements_path: requirements.txt
+trigger:
+  type: manual
+resources:
+  node:
+    type: node_selector
+    capacity_type: spot_fallback_on_demand
+  cpu_request: 4
+  cpu_limit: 8
+  memory_request: 16000
+  memory_limit: 32000
+  ephemeral_storage_request: 50000
+  ephemeral_storage_limit: 100000
+env:
+  HF_DATASET: porestar/seismicfoundationmodel-geobody
+workspace_fqn: ${WORKSPACE_FQN}
+retries: 2
+timeout: 3600
