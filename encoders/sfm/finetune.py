@@ -58,7 +58,7 @@ MODEL_REGISTRY = {
 
 # ── Checkpoint config ─────────────────────────────────────────────────────────
 
-CHECKPOINT_NAME        = "sfm-geobody-finetune-checkpoint"
+CHECKPOINT_NAME        = os.environ.get("CHECKPOINT_NAME", "sfm-geobody-finetune-checkpoint")
 CHECKPOINT_DIR         = "/tmp/sfm-checkpoint"
 CHECKPOINT_FILE        = os.path.join(CHECKPOINT_DIR, "checkpoint.pth")
 MAX_CHECKPOINT_SEARCH  = 50
