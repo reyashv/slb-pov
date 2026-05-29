@@ -1,0 +1,39 @@
+type: service
+name: sfm-inference-service
+image:
+  type: build
+  build_source:
+    type: git
+    repo_url: https://github.com/reyashv/slb-pov
+    ref: 889d244dc837f947aa206abba46f3005c5246ffe
+    branch_name: restructure/slb-pov
+  build_spec:
+    type: tfy-python-buildpack
+    build_context_path: ./decoder/
+    command: gunicorn -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 inference_service:app
+    python_version: '3.11'
+    python_dependencies:
+      type: pip
+      requirements_path: requirements.txt
+ports:
+  - port: 8000
+    expose: true
+    protocol: TCP
+    app_protocol: http
+env:
+  DECODER_CLASSIFY_URL: http://decoder-classify.slb-ws.svc.cluster.local:8000
+  DECODER_DETECT_URL: http://decoder-detect.slb-ws.svc.cluster.local:8000
+  DECODER_SEGMENT_URL: http://decoder-segment.slb-ws.svc.cluster.local:8000
+workspace_fqn: ${WORKSPACE_FQN}
+replicas: 1
+resources:
+  node:
+    type: node_selector
+    capacity_type: spot_fallback_on_demand
+  cpu_request: 1
+  cpu_limit: 2
+  memory_request: 2000
+  memory_limit: 4000
+  ephemeral_storage_request: 5000
+  ephemeral_storage_limit: 10000
+allow_interception: false
