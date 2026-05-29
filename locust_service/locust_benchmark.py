@@ -11,12 +11,20 @@ IMG_SIZE = int(os.environ.get("IMG_SIZE", "224"))
 data = np.zeros((BATCH_SIZE, 1, IMG_SIZE, IMG_SIZE), dtype=np.float32)
 
 if SERVER_TYPE == "fastapi":
-    ENDPOINT = "/infer"
-    PAYLOAD = {
-        "data": data.flatten().tolist(),
-        "height": IMG_SIZE,
-        "width": IMG_SIZE
-    }
+    if BATCH_SIZE == 1:
+        ENDPOINT = "/infer"
+        PAYLOAD = {
+            "data": data[0].flatten().tolist(),  # single slice
+            "height": IMG_SIZE,
+            "width": IMG_SIZE
+        }
+    else:
+        ENDPOINT = "/batch_infer"
+        PAYLOAD = {
+            "slices": [data[i].flatten().tolist() for i in range(BATCH_SIZE)],
+            "height": IMG_SIZE,
+            "width": IMG_SIZE
+        }
 else:
     ENDPOINT = f"/v2/models/{MODEL_NAME}/infer"
     PAYLOAD = {
