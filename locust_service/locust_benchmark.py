@@ -1,41 +1,34 @@
-"""
-locust_benchmark.py — SFM PyTriton batch size benchmark
-Uses Locust's built-in HTTP client to call Triton's HTTP REST API directly.
-Control batch size via BATCH_SIZE env var.
-"""
-
 import os
-import json
 import numpy as np
 from locust import HttpUser, task, constant
 
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "1"))
-MODEL_NAME = "sfm_large"
-IMG_SIZE = 224
+MODEL_NAME = os.environ.get("MODEL_NAME", "sfm_large")
+SERVER_TYPE = os.environ.get("SERVER_TYPE", "triton")  # "triton" or "fastapi"
+IMG_SIZE = int(os.environ.get("IMG_SIZE", "224"))
 
-print(f"Running with BATCH_SIZE={BATCH_SIZE}")
+# Pre-build payload once
+data = np.zeros((BATCH_SIZE, 1, IMG_SIZE, IMG_SIZE), dtype=np.float32)
 
-# Build Triton HTTP REST payload
-# POST /v2/models/{model}/infer
-def make_payload(batch_size):
-    data = np.zeros((batch_size, 1, IMG_SIZE, IMG_SIZE), dtype=np.float32)
-    return {
-        "inputs": [
-            {
-                "name": "INPUT",
-                "shape": [batch_size, 1, IMG_SIZE, IMG_SIZE],
-                "datatype": "FP32",
-                "data": data.flatten().tolist()
-            }
-        ],
-        "outputs": [{"name": "OUTPUT"}]
+if SERVER_TYPE == "fastapi":
+    ENDPOINT = "/infer"
+    PAYLOAD = {
+        "data": data.flatten().tolist(),
+        "height": IMG_SIZE,
+        "width": IMG_SIZE
+    }
+else:
+    ENDPOINT = f"/v2/models/{MODEL_NAME}/infer"
+    PAYLOAD = {
+        "inputs": [{
+            "name": "INPUT",
+            "shape": [BATCH_SIZE, 1, IMG_SIZE, IMG_SIZE],
+            "datatype": "FP32",
+            "data": data.flatten().tolist()
+        }]
     }
 
-PAYLOAD = make_payload(BATCH_SIZE)
-ENDPOINT = f"/v2/models/{MODEL_NAME}/infer"
-
-
-class SFMTritonUser(HttpUser):
+class SFMUser(HttpUser):
     wait_time = constant(0)
 
     @task
