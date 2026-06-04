@@ -61,7 +61,7 @@ slb-pov/
 | 1 | TrueFoundry UI → Workspaces | Click **New Workspace** |
 | 2 | Name | Enter your workspace name (e.g. `slb-ws`) |
 | 3 | Cluster | Select your cluster |
-| 4 | Permission | Add permission for ML Repo |
+| 4 | Permission | Add permission for ML Repo (use `slb-pov` for now) |
 | 5 | Save | Click **Create** |
 
 ### 1.2 Create an ML Repo
