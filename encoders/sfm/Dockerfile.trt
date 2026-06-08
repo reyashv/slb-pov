@@ -1,7 +1,5 @@
-# PyTriton requires the tritonserver base image
 FROM nvcr.io/nvidia/tritonserver:24.12-py3
 WORKDIR /app
-# Pin tensorrt to 10.7.0 to match tritonserver:24.12 system TRT version
 RUN pip install --no-cache-dir \
     truefoundry \
     nvidia-pytriton==0.5.10 \
@@ -13,9 +11,11 @@ RUN pip install --no-cache-dir \
     Pillow==10.3.0 \
     fastapi==0.111.0 \
     uvicorn==0.30.1 \
-    pydantic==2.7.4
-# Copy server code
+    pydantic==2.7.4 \
+    grpcio-tools==1.64.1 \
+    protobuf==5.27.2
 COPY sfm_server_trt.py .
 COPY convert_trt.py .
+COPY proto/ ./proto/
 EXPOSE 8000 8001 8080
 CMD ["python3", "sfm_server_trt.py"]
