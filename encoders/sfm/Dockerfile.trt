@@ -1,23 +1,20 @@
 # PyTriton requires the tritonserver base image
 FROM nvcr.io/nvidia/tritonserver:24.12-py3
-
 WORKDIR /app
-
 # Install Python dependencies
+# Pin tensorrt to 10.7.0 to match tritonserver:24.12 system TRT version
+# Without pin, pip installs TRT 11.0 which removed BuilderFlag.FP16 and EXPLICIT_BATCH
 RUN pip install --no-cache-dir \
     truefoundry \
     nvidia-pytriton==0.5.10 \
-    tensorrt \
+    tensorrt==10.7.0 \
     numpy==1.26.4 \
     torch==2.2.0 \
     timm==0.9.12 \
     onnx==1.16.0 \
     Pillow==10.3.0
-
 # Copy server code
 COPY sfm_server_trt.py .
 COPY convert_trt.py .
-
 EXPOSE 8000 8001
-
 CMD ["python3", "sfm_server_trt.py"]
