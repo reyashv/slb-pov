@@ -1,14 +1,15 @@
 """
-benchmark_full_image_v2.py — Server-side tiling benchmark
+benchmark_full_image_v2.py — Server-side tiling benchmark (base64 encoding)
 Tests SLB target: 4K x 2K image p50 ≤ 3000ms, p95 ≤ 6000ms
 
-Sends ONE request with the full image to /infer_full_image endpoint.
+Sends ONE request with the full image (base64 encoded) to /infer_full_image.
 Server tiles internally and runs GPU inference in batches.
 """
 
 import os
 import time
 import json
+import base64
 import argparse
 import numpy as np
 import requests
@@ -27,9 +28,10 @@ ENDPOINT = "/infer_full_image"
 
 
 def make_payload(h, w):
-    """Generate a random full image payload."""
-    data = np.random.randn(h * w).astype(np.float32).tolist()
-    return {"data": data, "height": h, "width": w}
+    """Generate a random full image as base64 encoded float32."""
+    data = np.random.randn(h, w).astype(np.float32)
+    data_b64 = base64.b64encode(data.tobytes()).decode("ascii")
+    return {"data_b64": data_b64, "height": h, "width": w}
 
 
 def run_request(session, url, endpoint, payload):
@@ -37,20 +39,24 @@ def run_request(session, url, endpoint, payload):
     resp = session.post(url + endpoint, json=payload, timeout=120)
     t1 = time.perf_counter()
     if resp.status_code != 200:
-        raise Exception(f"HTTP {resp.status_code}: {resp.text[:200]}")
+        raise Exception(f"HTTP {resp.status_code}: {resp.text[:300]}")
     body = resp.json()
     return (t1 - t0) * 1000.0, body
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--n", type=int, default=20, help="Number of timed runs")
+    parser.add_argument("--n", type=int, default=20)
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--output", default="full_image_v2_results.json")
     args = parser.parse_args()
 
-    print(f"\nSLB Full Image Benchmark (server-side tiling)")
+    raw_size_mb = FULL_IMAGE_H * FULL_IMAGE_W * 4 / (1024 * 1024)
+    b64_size_mb = raw_size_mb * 4 / 3
+
+    print(f"\nSLB Full Image Benchmark (server-side tiling, base64)")
     print(f"Image: {FULL_IMAGE_H}x{FULL_IMAGE_W}")
+    print(f"Payload: {raw_size_mb:.0f}MB raw → {b64_size_mb:.0f}MB base64")
     print(f"Target: p50 ≤ {TARGETS['p50_ms']}ms, p95 ≤ {TARGETS['p95_ms']}ms")
     print(f"URL: {URL}{ENDPOINT}")
     print(f"Warmup: {args.warmup} | Timed: {args.n}")
@@ -65,12 +71,12 @@ def main():
         print(f"Health check failed: {e}")
         return
 
-    # Build payload once (reuse for all requests)
-    print("Building payload...", end="", flush=True)
+    # Build payload once
+    print("Building base64 payload...", end="", flush=True)
     payload = make_payload(FULL_IMAGE_H, FULL_IMAGE_W)
-    print(f" done ({FULL_IMAGE_H}x{FULL_IMAGE_W} = {len(payload['data'])} floats)")
+    print(f" done ({len(payload['data_b64'])} chars)")
 
-    # Single test request to verify
+    # Single test
     print("Testing single request...", end="", flush=True)
     try:
         ms, body = run_request(session, URL, ENDPOINT, payload)
@@ -122,7 +128,7 @@ def main():
 
     print(f"\n{'='*50}")
     print(f"  RESULTS — Full Image ({FULL_IMAGE_H}x{FULL_IMAGE_W})")
-    print(f"  Server-side tiling, single request")
+    print(f"  Server-side tiling, base64 payload")
     print(f"{'='*50}")
     print(f"  Total (end-to-end):")
     print(f"    p50:  {p50:.0f} ms  {'✅ PASS' if p50_pass else '❌ FAIL'} (target ≤ {TARGETS['p50_ms']}ms)")
@@ -134,8 +140,9 @@ def main():
     print(f"  Errors: {errors}/{args.n}")
 
     results = {
-        "benchmark": "full_image_server_side_tiling",
+        "benchmark": "full_image_server_side_tiling_b64",
         "image_size": f"{FULL_IMAGE_H}x{FULL_IMAGE_W}",
+        "payload_mb": round(b64_size_mb, 1),
         "targets": TARGETS,
         "p50_ms": round(p50, 0),
         "p95_ms": round(p95, 0),
