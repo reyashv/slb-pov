@@ -127,9 +127,12 @@ def main():
 
         print("Building TensorRT FP16 engine (this takes 5-15 minutes)...")
         builder = trt.Builder(TRT_LOGGER)
-        network = builder.create_network(
-            1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
-        )
+        # EXPLICIT_BATCH removed in TRT 10+ — explicit batch is default now
+        try:
+            flags = 1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
+        except AttributeError:
+            flags = 0
+        network = builder.create_network(flags)
         parser = trt.OnnxParser(network, TRT_LOGGER)
 
         with open(onnx_path, "rb") as f:
