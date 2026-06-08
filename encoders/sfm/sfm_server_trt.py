@@ -84,7 +84,7 @@ def make_infer_fn(engine):
 # ── FastAPI server for full image endpoint ────────────────────────────────────
 
 def start_fastapi(engine, img_size, gpu_batch_size):
-    from fastapi import FastAPI
+    from fastapi import FastAPI, Request, Response
     from pydantic import BaseModel
     from typing import List, Optional
     import uvicorn
@@ -162,6 +162,68 @@ def start_fastapi(engine, img_size, gpu_batch_size):
             embed_dim=all_features.shape[1],
             latency_ms=round((t_end - t_start) * 1000, 1),
             gpu_time_ms=round((t_gpu_end - t_gpu_start) * 1000, 1),
+        )
+
+    # ── Protobuf endpoint ─────────────────────────────────────
+    @app.post("/infer_full_image_pb")
+    async def infer_full_image_pb(request: Request):
+        """
+        Accepts protobuf-encoded InferFullImageRequest.
+        Returns protobuf-encoded InferFullImageResponse.
+        Content-Type: application/x-protobuf
+        """
+        from proto import sfm_inference_pb2
+
+        raw = await request.body()
+        req = sfm_inference_pb2.InferFullImageRequest()
+        req.ParseFromString(raw)
+
+        t_start = time.perf_counter()
+        ts = req.tile_size if req.tile_size > 0 else img_size
+
+        # Decode raw bytes → numpy
+        image = np.frombuffer(req.data, dtype=np.float32).reshape(req.height, req.width)
+
+        # Tile
+        n_rows = math.ceil(req.height / ts)
+        n_cols = math.ceil(req.width / ts)
+        tiles = []
+        for r in range(n_rows):
+            for c in range(n_cols):
+                tile = np.zeros((ts, ts), dtype=np.float32)
+                h_start, w_start = r * ts, c * ts
+                h_end = min(h_start + ts, req.height)
+                w_end = min(w_start + ts, req.width)
+                tile[:h_end - h_start, :w_end - w_start] = image[h_start:h_end, w_start:w_end]
+                tiles.append(tile)
+
+        tiles_np = np.stack(tiles)[:, np.newaxis, :, :]
+
+        # GPU inference
+        t_gpu = time.perf_counter()
+        all_features = []
+        for i in range(0, len(tiles), gpu_batch_size):
+            batch_input = tiles_np[i:i + gpu_batch_size]
+            features = run_trt_inference(engine, batch_input)
+            all_features.append(features)
+        all_features = np.concatenate(all_features, axis=0)
+        t_gpu_end = time.perf_counter()
+        t_end = time.perf_counter()
+
+        # Build protobuf response
+        resp = sfm_inference_pb2.InferFullImageResponse()
+        resp.features = all_features.astype(np.float32).tobytes()
+        resp.n_tiles = len(tiles)
+        resp.tile_size = ts
+        resp.embed_dim = all_features.shape[1]
+        resp.grid_rows = n_rows
+        resp.grid_cols = n_cols
+        resp.latency_ms = round((t_end - t_start) * 1000, 1)
+        resp.gpu_time_ms = round((t_gpu_end - t_gpu) * 1000, 1)
+
+        return Response(
+            content=resp.SerializeToString(),
+            media_type="application/x-protobuf",
         )
 
     print(f"Starting FastAPI server on port 8080 (full image endpoint)...")
