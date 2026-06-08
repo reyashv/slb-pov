@@ -92,16 +92,17 @@ def start_fastapi(engine, img_size, gpu_batch_size):
     app = FastAPI(title="SFM Full Image Inference")
 
     class FullImageRequest(BaseModel):
-        data: List[float]
+        data_b64: str  # base64 encoded float32 array
         height: int
         width: int
-        tile_size: Optional[int] = None  # defaults to img_size
+        tile_size: Optional[int] = None
 
     class FullImageResponse(BaseModel):
-        features: List[List[float]]
+        features_b64: str  # base64 encoded float32 result
         n_tiles: int
         tile_size: int
-        tile_grid: List[int]  # [rows, cols]
+        tile_grid: List[int]
+        embed_dim: int
         latency_ms: float
         gpu_time_ms: float
 
@@ -111,11 +112,13 @@ def start_fastapi(engine, img_size, gpu_batch_size):
 
     @app.post("/infer_full_image", response_model=FullImageResponse)
     def infer_full_image(req: FullImageRequest):
+        import base64
         t_start = time.perf_counter()
         ts = req.tile_size or img_size
 
-        # Reconstruct full image
-        image = np.array(req.data, dtype=np.float32).reshape(req.height, req.width)
+        # Decode base64 → numpy float32 array
+        raw = base64.b64decode(req.data_b64)
+        image = np.frombuffer(raw, dtype=np.float32).reshape(req.height, req.width)
 
         # Tile the image into ts x ts patches with zero-padding at edges
         n_rows = math.ceil(req.height / ts)
@@ -147,11 +150,16 @@ def start_fastapi(engine, img_size, gpu_batch_size):
 
         t_end = time.perf_counter()
 
+        # Encode features as base64
+        features_bytes = all_features.astype(np.float32).tobytes()
+        features_b64 = base64.b64encode(features_bytes).decode("ascii")
+
         return FullImageResponse(
-            features=all_features.tolist(),
+            features_b64=features_b64,
             n_tiles=len(tiles),
             tile_size=ts,
             tile_grid=[n_rows, n_cols],
+            embed_dim=all_features.shape[1],
             latency_ms=round((t_end - t_start) * 1000, 1),
             gpu_time_ms=round((t_gpu_end - t_gpu_start) * 1000, 1),
         )
