@@ -385,7 +385,7 @@ def main():
                 Tensor(name="OUTPUT", dtype=np.float32, shape=(embed_dim,)),
             ],
             config=ModelConfig(
-                max_batch_size=256,
+                max_batch_size=32,
                 batcher=DynamicBatcher(
                     max_queue_delay_microseconds=5000,
                 ),
