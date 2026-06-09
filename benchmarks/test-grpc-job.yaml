@@ -1,0 +1,36 @@
+type: job
+name: test-grpc
+image:
+  type: build
+  build_source:
+    type: git
+    repo_url: https://github.com/reyashv/slb-pov
+    ref: ${COMMIT_HASH}
+    branch_name: restructure/slb-pov
+  build_spec:
+    type: tfy-python-buildpack
+    build_context_path: ./benchmarks/
+    command: python test_grpc.py
+    python_version: '3.11'
+    python_dependencies:
+      type: pip
+      pip_packages:
+        - tritonclient[grpc]==2.50.0
+        - numpy==1.26.4
+trigger:
+  type: manual
+env:
+  GRPC_HOST: sfm-large-trt.slb-ws.svc.cluster.local
+  GRPC_PORT: '8001'
+  SFM_IMG_SIZE: '224'
+workspace_fqn: ${WORKSPACE_FQN}
+resources:
+  node:
+    type: node_selector
+    capacity_type: spot_fallback_on_demand
+  cpu_request: 1
+  cpu_limit: 2
+  memory_request: 2000
+  memory_limit: 4000
+  ephemeral_storage_request: 5000
+  ephemeral_storage_limit: 10000
