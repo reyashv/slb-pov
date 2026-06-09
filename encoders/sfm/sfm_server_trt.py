@@ -164,6 +164,130 @@ def start_fastapi(engine, img_size, gpu_batch_size):
             gpu_time_ms=round((t_gpu_end - t_gpu_start) * 1000, 1),
         )
 
+    # ── SLB API Contract endpoint ─────────────────────────────
+    class ROI(BaseModel):
+        inline: Optional[List[int]] = None
+        xline: Optional[List[int]] = None
+        z: Optional[List[int]] = None
+
+    class InputSpec(BaseModel):
+        uri: Optional[str] = None          # S3/SDMS reference (future)
+        data_b64: Optional[str] = None     # inline base64 encoded data
+        height: Optional[int] = None       # required for inline
+        width: Optional[int] = None        # required for inline
+        roi: Optional[ROI] = None
+
+    class SLBRequest(BaseModel):
+        model: str = "seismic-fm"
+        version: str = "1.0.0"
+        input: InputSpec
+        task: str = "embedding"
+        output_format: str = "json"
+
+    class SLBMetadata(BaseModel):
+        tiles: int
+        model_version: str
+        tile_size: int
+        embed_dim: int
+        grid: List[int]
+        gpu_time_ms: float
+
+    class SLBResponse(BaseModel):
+        status: str
+        latency_ms: float
+        output_uri: Optional[str] = None
+        output_b64: Optional[str] = None
+        metadata: SLBMetadata
+
+    @app.post("/v1/infer", response_model=SLBResponse)
+    def slb_infer(req: SLBRequest):
+        import base64
+        t_start = time.perf_counter()
+        ts = img_size
+
+        # Handle input source
+        if req.input.uri:
+            # S3/SDMS reference — not yet implemented
+            if req.input.uri.startswith("s3://"):
+                return SLBResponse(
+                    status="error",
+                    latency_ms=0,
+                    metadata=SLBMetadata(tiles=0, model_version=req.version,
+                                        tile_size=ts, embed_dim=0, grid=[0,0], gpu_time_ms=0),
+                )
+            return SLBResponse(
+                status="error",
+                latency_ms=0,
+                metadata=SLBMetadata(tiles=0, model_version=req.version,
+                                    tile_size=ts, embed_dim=0, grid=[0,0], gpu_time_ms=0),
+            )
+        elif req.input.data_b64 and req.input.height and req.input.width:
+            # Inline base64 payload
+            raw = base64.b64decode(req.input.data_b64)
+            image = np.frombuffer(raw, dtype=np.float32).reshape(
+                req.input.height, req.input.width
+            )
+        else:
+            return SLBResponse(
+                status="error",
+                latency_ms=0,
+                metadata=SLBMetadata(tiles=0, model_version=req.version,
+                                    tile_size=ts, embed_dim=0, grid=[0,0], gpu_time_ms=0),
+            )
+
+        # Apply ROI crop if specified
+        if req.input.roi:
+            h_start = req.input.roi.inline[0] if req.input.roi.inline else 0
+            h_end = req.input.roi.inline[1] if req.input.roi.inline else image.shape[0]
+            w_start = req.input.roi.xline[0] if req.input.roi.xline else 0
+            w_end = req.input.roi.xline[1] if req.input.roi.xline else image.shape[1]
+            image = image[h_start:h_end, w_start:w_end]
+
+        # Tile
+        n_rows = math.ceil(image.shape[0] / ts)
+        n_cols = math.ceil(image.shape[1] / ts)
+        tiles = []
+        for r in range(n_rows):
+            for c in range(n_cols):
+                tile = np.zeros((ts, ts), dtype=np.float32)
+                h_s, w_s = r * ts, c * ts
+                h_e = min(h_s + ts, image.shape[0])
+                w_e = min(w_s + ts, image.shape[1])
+                tile[:h_e - h_s, :w_e - w_s] = image[h_s:h_e, w_s:w_e]
+                tiles.append(tile)
+        tiles_np = np.stack(tiles)[:, np.newaxis, :, :]
+
+        # GPU inference
+        t_gpu = time.perf_counter()
+        all_features = []
+        for i in range(0, len(tiles), gpu_batch_size):
+            batch_input = tiles_np[i:i + gpu_batch_size]
+            features = run_trt_inference(engine, batch_input)
+            all_features.append(features)
+        all_features = np.concatenate(all_features, axis=0)
+        t_gpu_end = time.perf_counter()
+
+        # Encode output
+        features_b64 = base64.b64encode(
+            all_features.astype(np.float32).tobytes()
+        ).decode("ascii")
+
+        t_end = time.perf_counter()
+
+        return SLBResponse(
+            status="succeeded",
+            latency_ms=round((t_end - t_start) * 1000, 1),
+            output_b64=features_b64,
+            metadata=SLBMetadata(
+                tiles=len(tiles),
+                model_version=req.version,
+                tile_size=ts,
+                embed_dim=all_features.shape[1],
+                grid=[n_rows, n_cols],
+                gpu_time_ms=round((t_gpu_end - t_gpu) * 1000, 1),
+            ),
+        )
+
     # ── Protobuf endpoint ─────────────────────────────────────
     @app.post("/infer_full_image_pb")
     async def infer_full_image_pb(request: Request):
