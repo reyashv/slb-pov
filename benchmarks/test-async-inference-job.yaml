@@ -1,0 +1,32 @@
+type: job
+name: test-async-inference
+image:
+  type: build
+  build_source:
+    type: git
+    repo_url: https://github.com/reyashv/slb-pov
+    ref: ${COMMIT_HASH}
+    branch_name: restructure/slb-pov
+  build_spec:
+    type: tfy-python-buildpack
+    build_context_path: ./benchmarks/
+    command: python test_async_inference.py
+    python_version: '3.11'
+    python_dependencies:
+      type: pip
+      requirements_path: requirements.txt
+trigger:
+  type: manual
+env:
+  SFM_LARGE_TRT_URL: http://sfm-large-trt.slb-ws.svc.cluster.local:8080
+workspace_fqn: ${WORKSPACE_FQN}
+resources:
+  node:
+    type: node_selector
+    capacity_type: spot_fallback_on_demand
+  cpu_request: 2
+  cpu_limit: 4
+  memory_request: 8000
+  memory_limit: 16000
+  ephemeral_storage_request: 5000
+  ephemeral_storage_limit: 10000
