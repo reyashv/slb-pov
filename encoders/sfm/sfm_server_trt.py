@@ -288,6 +288,179 @@ def start_fastapi(engine, img_size, gpu_batch_size):
             ),
         )
 
+    # ── Async Inference with Queue ─────────────────────────────
+    import uuid
+    import threading
+
+    # In-memory job store (production would use Redis/DB)
+    job_store = {}
+    job_lock = threading.Lock()
+
+    class AsyncInferRequest(BaseModel):
+        data_b64: Optional[str] = None
+        height: Optional[int] = None
+        width: Optional[int] = None
+        artifact_fqn: Optional[str] = None  # ML Repo reference
+        tile_size: Optional[int] = None
+        task: str = "embedding"
+        model: str = "seismic-fm"
+        version: str = "1.0.0"
+
+    class AsyncInferResponse(BaseModel):
+        job_id: str
+        status: str
+        message: str
+
+    class JobStatusResponse(BaseModel):
+        job_id: str
+        status: str  # queued, running, succeeded, failed
+        latency_ms: Optional[float] = None
+        n_tiles: Optional[int] = None
+        result_b64: Optional[str] = None
+        error: Optional[str] = None
+
+    def process_async_job(job_id, image, ts):
+        """Background worker that processes a job from the queue."""
+        import base64
+        try:
+            with job_lock:
+                job_store[job_id]["status"] = "running"
+
+            t_start = time.perf_counter()
+
+            # Tile
+            n_rows = math.ceil(image.shape[0] / ts)
+            n_cols = math.ceil(image.shape[1] / ts)
+            tiles = []
+            for r in range(n_rows):
+                for c in range(n_cols):
+                    tile = np.zeros((ts, ts), dtype=np.float32)
+                    h_s, w_s = r * ts, c * ts
+                    h_e = min(h_s + ts, image.shape[0])
+                    w_e = min(w_s + ts, image.shape[1])
+                    tile[:h_e - h_s, :w_e - w_s] = image[h_s:h_e, w_s:w_e]
+                    tiles.append(tile)
+            tiles_np = np.stack(tiles)[:, np.newaxis, :, :]
+
+            # GPU inference
+            all_features = []
+            for i in range(0, len(tiles), gpu_batch_size):
+                batch_input = tiles_np[i:i + gpu_batch_size]
+                features = run_trt_inference(engine, batch_input)
+                all_features.append(features)
+            all_features = np.concatenate(all_features, axis=0)
+
+            t_end = time.perf_counter()
+            result_b64 = base64.b64encode(
+                all_features.astype(np.float32).tobytes()
+            ).decode("ascii")
+
+            with job_lock:
+                job_store[job_id].update({
+                    "status": "succeeded",
+                    "latency_ms": round((t_end - t_start) * 1000, 1),
+                    "n_tiles": len(tiles),
+                    "result_b64": result_b64,
+                })
+
+        except Exception as e:
+            with job_lock:
+                job_store[job_id].update({
+                    "status": "failed",
+                    "error": str(e),
+                })
+
+    @app.post("/v1/async/infer", response_model=AsyncInferResponse)
+    def async_infer(req: AsyncInferRequest):
+        import base64
+
+        job_id = str(uuid.uuid4())[:8]
+        ts = req.tile_size or img_size
+        image = None
+
+        # Source 1: Inline base64 payload
+        if req.data_b64 and req.height and req.width:
+            raw = base64.b64decode(req.data_b64)
+            image = np.frombuffer(raw, dtype=np.float32).reshape(req.height, req.width)
+
+        # Source 2: ML Repo artifact reference
+        elif req.artifact_fqn:
+            try:
+                from truefoundry.ml import get_client as get_ml_client
+                ml_client = get_ml_client()
+                os.makedirs("/tmp/async-data", exist_ok=True)
+                av = ml_client.get_artifact_version_by_fqn(fqn=req.artifact_fqn)
+                dl = av.download(path="/tmp/async-data", overwrite=True)
+                # Look for .npy file in downloaded artifacts
+                import glob
+                npy_files = glob.glob(os.path.join(dl.download_dir, "*.npy"))
+                if npy_files:
+                    image = np.load(npy_files[0]).astype(np.float32)
+                else:
+                    return AsyncInferResponse(
+                        job_id=job_id, status="failed",
+                        message="No .npy file found in artifact"
+                    )
+            except Exception as e:
+                return AsyncInferResponse(
+                    job_id=job_id, status="failed",
+                    message=f"Failed to load artifact: {e}"
+                )
+        else:
+            return AsyncInferResponse(
+                job_id=job_id, status="failed",
+                message="Provide either data_b64+height+width or artifact_fqn"
+            )
+
+        # Queue the job
+        with job_lock:
+            job_store[job_id] = {
+                "status": "queued",
+                "job_id": job_id,
+            }
+
+        # Process in background thread
+        worker = threading.Thread(
+            target=process_async_job,
+            args=(job_id, image, ts),
+            daemon=True,
+        )
+        worker.start()
+
+        return AsyncInferResponse(
+            job_id=job_id,
+            status="queued",
+            message=f"Job queued. Poll status at /v1/async/status/{job_id}"
+        )
+
+    @app.get("/v1/async/status/{job_id}", response_model=JobStatusResponse)
+    def get_job_status(job_id: str):
+        with job_lock:
+            job = job_store.get(job_id)
+        if not job:
+            return JobStatusResponse(
+                job_id=job_id, status="not_found",
+                error="Job ID not found"
+            )
+        return JobStatusResponse(
+            job_id=job_id,
+            status=job.get("status", "unknown"),
+            latency_ms=job.get("latency_ms"),
+            n_tiles=job.get("n_tiles"),
+            result_b64=job.get("result_b64"),
+            error=job.get("error"),
+        )
+
+    @app.get("/v1/async/jobs")
+    def list_jobs():
+        with job_lock:
+            return {
+                "jobs": [
+                    {"job_id": k, "status": v.get("status")}
+                    for k, v in job_store.items()
+                ]
+            }
+
     # ── Protobuf endpoint ─────────────────────────────────────
     @app.post("/infer_full_image_pb")
     async def infer_full_image_pb(request: Request):
@@ -385,7 +558,7 @@ def main():
                 Tensor(name="OUTPUT", dtype=np.float32, shape=(embed_dim,)),
             ],
             config=ModelConfig(
-                max_batch_size=32,
+                max_batch_size=256,
                 batcher=DynamicBatcher(
                     max_queue_delay_microseconds=5000,
                 ),
