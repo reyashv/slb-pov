@@ -1,0 +1,38 @@
+type: job
+name: test-payload-limits
+image:
+  type: build
+  build_source:
+    type: git
+    repo_url: https://github.com/reyashv/slb-pov
+    ref: ${COMMIT_HASH}
+    branch_name: restructure/slb-pov
+  build_spec:
+    type: tfy-python-buildpack
+    build_context_path: ./benchmarks/
+    command: python test_payload_limits.py
+    python_version: '3.11'
+    python_dependencies:
+      type: pip
+      pip_packages:
+        - requests
+        - numpy==1.26.4
+        - tritonclient[grpc]==2.50.0
+trigger:
+  type: manual
+env:
+  REST_URL: http://sfm-large-trt.slb-ws.svc.cluster.local:8080
+  GRPC_HOST: sfm-large-trt.slb-ws.svc.cluster.local
+  GRPC_PORT: '8001'
+  SFM_IMG_SIZE: '224'
+workspace_fqn: ${WORKSPACE_FQN}
+resources:
+  node:
+    type: node_selector
+    capacity_type: spot_fallback_on_demand
+  cpu_request: 2
+  cpu_limit: 4
+  memory_request: 8000
+  memory_limit: 16000
+  ephemeral_storage_request: 5000
+  ephemeral_storage_limit: 10000
