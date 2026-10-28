@@ -1,5 +1,5 @@
-# cache-bust: 2026-05-22-v1
-truefoundry
+# cache-bust: 2026-10-28-v1
+truefoundry>=0.17.0
 torch==2.2.0
 torchvision==0.17.0
 timm==0.9.16
