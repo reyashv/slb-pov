@@ -1,4 +1,5 @@
-# cache-bust: 2026-10-28-v1
+# cache-bust: 2026-10-28-v2
+pyarrow==16.1.0
 truefoundry>=0.17.0
 pydantic>=2.7.1
 torch==2.2.0
